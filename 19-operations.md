@@ -537,6 +537,20 @@ definition, which is exactly why its ordering is normatively fixed (§2.7).
    block/allow lists against the now-known identity — a sender that passed the anonymous
    challenge gate (step 6) but is on an explicit per-identity block list (§9.2 `block`) is still
    rejected here.
+8a. **Verify transport-path provenance (§7.8) and assemble the `ProvenanceRecord` (§18.8.1).**
+   - If `Payload.provenance` (§18.3.5 key 9) is present, verify **each** `GatewayAttestation`
+     (§18.3.11): recompute `msg_digest` over the decrypted RFC 5322/MIME body and check the `sig`
+     against the `<selector>._dmtap-gw.<domain>` key (§18.9.11). The recipient-domain entry MUST
+     verify under the recipient's **own** domain; a required attestation that fails ⇒ reject the
+     legacy-origin claim (`0x0601`/`0x0602`, §7.2a) — the node MUST NOT surface an unverifiable
+     legacy message as attested legacy-origin. `origin = 1` (gateway-touched); mark the MOTE
+     *legacy-origin* (§3.9.4).
+   - If `Payload.provenance` is **absent**, `origin = 0` (**pure-mesh** — never plaintext at a
+     gateway, §7.8.1(b)).
+   - Record the **observed** arrival `tier`/`profile` and the **coarse** `min_hops` **profile
+     floor** (§4.4.10) — **never** any mix-node identity or path (§6.8) — and assemble the
+     node-local `ProvenanceRecord` for the client surface (§8.6, §19.9). This record is **not**
+     re-transmitted and is served only to the owner's own devices.
 9. Apply `expires`/`refs`/`kind` semantics (§2.4, §2.3); **store** the MOTE. If step 6/8 cleared
    it fully → store to the **inbox** and **`ack`** (§19.3.2). If step 6 only *deferred* it → hold
    it in the **requests area** (durably, 30 days, §16.5) but **do NOT `ack`**: an unproven cold
@@ -1689,7 +1703,11 @@ Responder: the gateway (acting as MX for the domain).
 3. Wrap the RFC 5322 message into a MOTE (`kind=0x00 mail`), encrypt to `K`.
 4. Set an **attestation**: the gateway signs `"received via gateway G at T from <SMTP
    envelope>"` under its **domain-anchored attestation key** — the key published at
-   `<sel>._dmtap-gw.<domain>. TXT` (§7.2a), never the gateway operator's own arbitrary key.
+   `<sel>._dmtap-gw.<domain>. TXT` (§7.2a), never the gateway operator's own arbitrary key. On the
+   wire this is a `GatewayAttestation` object (§18.3.11) — `domain`/`selector`/`recv_at`, a
+   `msg_digest` binding it to these exact RFC 5322 bytes (§18.9.11), and the signature — placed in
+   the sealed `Payload.provenance` chain (§18.3.5 key 9), so it is the seed of the recipient's
+   transport-path provenance (§7.8) and is visible only to the recipient (§6.8).
 5. Deliver the resulting MOTE into the mesh, addressed to `K` (`deliver`, §19.3.1, run at the
    recipient's node once it arrives).
 6. Deliver, then **wait for the recipient node's `ack` (§19.3.1) within the inbound SMTP
@@ -1956,6 +1974,7 @@ invoke.
 |---|---|---|
 | `Email/query` | Local index query over stored MOTEs (`kind=0x00/0x01`) filtered by mailbox/label CRDT state (§5.6) | Pure read over already-`deliver`ed/drafted state; no network operation |
 | `Email/get` | Local read of a stored MOTE's decrypted `Payload` (already decrypted at `deliver` time, §19.3.1 step 7) | The node caches plaintext at rest (§6.7); JMAP never re-decrypts per-request |
+| `Email/get` — transport-path provenance (§7.8) | Local read of the node-assembled `ProvenanceRecord` (§18.8.1) produced at `deliver` step 8a (§19.3.1), exposed as a DMTAP-native per-message property (e.g. `dmtap:provenance` via a JMAP capability/extension, §8.1) | Read-only, node-local; surfaces `tier`/`profile`/`origin` (pure-mesh vs gateway-touched) + the verified `GatewayAttestation` chain + the **coarse** `min_hops` floor — **never** mix-node identities (§6.8). Feeds the client transport-path graph (§8.6). Not a new MOTE operation |
 | `Email/set` (create = send) | Construct `Payload` → `QUEUED` (§4.7) → sender-retry state machine (§19.3.3), which itself invokes `attempt-reachability` (§19.2.3) and ultimately a remote `deliver` (§19.3.1) | A JMAP "send" is exactly the sender side of §19.3; JMAP does not define a new send mechanism |
 | `Email/set` (update = flag/label/move) | Local CRDT state change (§5.6), replicated across the device cluster | No wire MOTE is produced; this is why "mark read" has no protocol object (§17.1 item 18) |
 | `Email/set` (destroy) | Local deletion; optionally a cooperative `kind=0x04 redact` MOTE (§2.3) sent to original correspondents, which is itself an ordinary `deliver`/`ack` exchange, non-enforceable at the recipient (§6.6 item 8) | `Email/set destroy` is local-authoritative; the `redact` MOTE is a hint, not a guarantee |

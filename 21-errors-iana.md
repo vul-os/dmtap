@@ -194,8 +194,8 @@ to a MOTE) is a distinct concept scoped to the Auth ceremony; see `0x0502` (§21
 
 | Code | Name | Operation(s) | Meaning | Retryable | Action |
 |------|------|--------------|---------|:---------:|--------|
-| `0x0601` | `ERR_GATEWAY_ATTESTATION_INVALID` | Inbound attestation verification (§7.2a) | The attestation signature over "received via gateway G at T" does not verify. | No | DROP_SILENT at the recipient node (see honest limit, §21.9) |
-| `0x0602` | `ERR_GATEWAY_ATTESTATION_KEY_UNTRUSTED` | Inbound attestation key lookup (§7.2a) | The attestation key is not published under the recipient's own domain's `_dmtap-gw` record, nor in an explicitly trusted set. | No | DROP_SILENT |
+| `0x0601` | `ERR_GATEWAY_ATTESTATION_INVALID` | Inbound `GatewayAttestation` verification (§7.2a, §18.3.11, §18.9.11; at `deliver` step 8a, §19.3.1) | The `GatewayAttestation` fails to verify: its signature over "received via gateway G at T" does not verify, `msg_digest` does not match the wrapped message bytes, or the `disc` is an unknown attestation kind. | No | DROP_SILENT at the recipient node (see honest limit, §21.9) |
+| `0x0602` | `ERR_GATEWAY_ATTESTATION_KEY_UNTRUSTED` | Inbound attestation key lookup (§7.2a, §18.3.11) | The attestation key (`<selector>._dmtap-gw.<domain>`) is not published under the recipient's own domain's `_dmtap-gw` record, nor in an explicitly trusted set (incl. a chained entry under an untrusted `domain`, §7.8.3). | No | DROP_SILENT |
 | `0x0603` | `ERR_DKIM_DELEGATION_INVALID` | Outbound DKIM verification at destination MTA (§7.3) | The gateway's delegated-selector DKIM signature fails to verify at the receiving legacy system. | Yes (fix key publication) | REJECT_NOTIFY — the sending node's queue retries per §7.4 |
 | `0x0604` | `ERR_MX_TRANSIENT_FAILURE` | Outbound SMTP transaction (§7.3) | The destination MX rejects or times out the transaction transiently. | Yes | REJECT_NOTIFY — the sending node retries; the gateway holds nothing (§7.4) |
 

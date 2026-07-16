@@ -217,3 +217,35 @@ anonymous."
   member already downloaded cannot be recalled — deletion/recall is cooperative-only, never a
 guarantee (the un-share limit; `redact`/`expires` are unenforceable cooperative hints, §6.6 item 8).
 - Recovery custody (§1.4) governs how at-rest keys survive device loss.
+
+## 6.8 Transport-path provenance does not weaken metadata privacy (normative)
+
+DMTAP lets a recipient learn and verify a message's **transport-path provenance** — the tier it
+arrived on, whether it was gateway-touched or pure-mesh, and a coarse hop descriptor (§7.8, wire
+objects §18.3.11 / §18.8.1). This is deliberately constrained so it **reveals only trust-boundary
+crossings the recipient can already infer, and nothing more** — it MUST NOT weaken sealed sender
+(§6.2) or mixnet anonymity (§4.4):
+
+- **Provenance answers "which trust boundaries did this cross?", never "which nodes carried it?"**
+  For the `private` tier the recipient learns only the **profile floor** the path satisfied
+  (`≥ 3` / `≥ 5` hops, §4.4.10) — **never** a mix-node identity, address, exact hop count, path
+  descriptor, or per-hop timing. The private path is, by design, unknown even to the recipient's
+  own node (that is the anonymity guarantee, §6.2); a `ProvenanceRecord` MUST NOT contain, and a
+  node MUST NOT synthesize, anything from which the path could be reconstructed (§18.8.1 privacy
+  invariants). The coarse hop descriptor is a **statement about the profile**, not a trace.
+- **The gateway attestation is sealed, so it leaks nothing to intermediaries.** The
+  `GatewayAttestation` that marks a message gateway-touched (and names the gateway domain, time,
+  and legacy sender) rides **inside the encrypted `Payload`** (§18.3.5), visible only to the
+  recipient — a mixnet intermediary sees only ciphertext (§2.2, §6.2). The legacy-sender address it
+  carries is the recipient's own inbound mail, which the recipient legitimately sees anyway.
+- **The provenance record never leaves the owner's devices.** A `ProvenanceRecord` is node-local,
+  served only over the authenticated client surface to the owner's own cluster (§8.1, §8.3,
+  §19.9); it is never attached to a forwarded MOTE or exposed to a third party (§18.8.1). It adds
+  **no** new on-wire field observable by any intermediary.
+- **Gateway-touched vs. pure-mesh exposes only what the boundary already exposed.** A gateway leg
+  is *unavoidably* plaintext (§7 opening) — provenance merely lets the recipient **see that this
+  already happened**, it does not create new exposure. A pure-mesh message's "no attestation"
+  state is the *absence* of a signal, which leaks nothing.
+
+This keeps provenance consistent with the §12.3 inviolable rule: it is a **transparency** feature
+over boundaries the design already makes visible, not a metadata-privacy regression.

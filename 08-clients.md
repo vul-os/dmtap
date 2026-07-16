@@ -72,3 +72,28 @@ Silent grants that would **redirect or delegate** that data — **auto-forward r
 **capability delegations** (§13.5), and new **RP-session authorizations** (§13.4) — MUST be
 surfaced to the owner's device cluster and logged to KT self-monitoring (§3.5), so a
 business-email-compromise-style silent redirect or delegation is owner-visible, not covert.
+
+## 8.6 Surfacing the transport-path (UX guidance)
+
+The node exposes a per-message **`ProvenanceRecord`** (§18.8.1) over the client surface (JMAP,
+§8.1; mapped in §19.9), and a client **SHOULD surface the transport-path** so a user can see, for
+any message, **how it reached them and which trust boundaries it crossed** (§7.8). This is
+implementer UX guidance, not a wire requirement.
+
+- **Render a transport-path graph:** `sender → tier (hops) → gateway? → recipient`. Draw the
+  arrival **tier** (`private`/mixnet vs `fast`/direct), the **coarse hop descriptor** (the profile
+  floor, e.g. "≥ 3 mix hops" — **never** individual mix nodes, which the node does not know and
+  MUST NOT invent, §6.8), and the **gateway leg** if one exists.
+- **Make pure-mesh vs. gateway-touched visually unmistakable.** A **pure-mesh** message (no
+  attestation, `origin = 0`) SHOULD be shown as **end-to-end, never plaintext at a gateway**; a
+  **gateway-touched / legacy-origin** message (`origin = 1`) SHOULD be shown as having crossed a
+  named gateway (`GatewayAttestation.domain`, its receipt time, and — for inbound — the legacy
+  sender), clearly marked **not E2E before the gateway** (§7.2a). Chained gateways (§7.8.3) render
+  as ordered hops, with any unverified-domain hop flagged as such.
+- **Do not over-claim on `private`.** While the mix fleet is small the client MUST honour the
+  §6.6/§4.4.11 disclosure and MUST NOT present `private` as absolute anonymity; the graph shows the
+  **boundary crossings**, not a node-by-node trace.
+- **Tie it to billing transparency.** For a gateway-touched message the client MAY let the user
+  confirm the attestation against the operator's metered legacy operation (§7.9, §12.7) — "this
+  message used the gateway, which is why it was billed" — and MUST NOT show a pure-mesh message as
+  a billable gateway operation.

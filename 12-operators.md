@@ -124,3 +124,32 @@ operator seam (§12.2) — and the inviolable rule (§12.3) draws the honest lin
 This keeps a real management console fully expressible on the seam while the sovereignty ethic
 holds: **admin power and premium are for running the domain and its operations, never for reaching
 into a member's keys** (§12.3).
+
+## 12.7 Gateway billing is auditable via transport-path provenance (normative)
+
+The seam meters **gateway operations** — legacy sends/receives — as a real cost center (§12.2
+Metering; §7.9). Transport-path provenance (§7.8) makes that billing **auditable to the user**,
+closing the gap between "the operator says you used the gateway" and "you can verify you did."
+
+- **Billing attaches to gateway operations only, never to native mesh delivery.** A message that
+  crossed a legacy gateway carries (inbound) or produced (outbound) the mandatory §7.2a
+  attestation; a **pure-mesh** DMTAP↔DMTAP message carries none (§7.8.1(b)) and is, by
+  construction, **not a gateway operation**. Per the inviolable rule (§12.3), native delivery and
+  every privacy/crypto path are **never** metered or gated. A self-hoster reaching only DMTAP
+  correspondents therefore incurs **zero** gateway billing (§7.9).
+- **Every billable legacy operation is provenance-backed.** Because each gateway-touched message
+  bears a verifiable `GatewayAttestation` (§18.3.11) naming the gateway `domain` and receipt time,
+  a user can match each metered charge to a real message that **actually used the gateway** — the
+  message's own `ProvenanceRecord` (§18.8.1) is the receipt. A charge with no corresponding
+  attested message, or a **pure-mesh** message appearing on a gateway bill, is a **detectable
+  billing error**, not something the user must take on faith.
+- **Self-host authorization is a `GatewayAuthz` policy matter, disclosed.** A self-hoster's use of
+  a *third-party* gateway is governed by the operator's `GatewayAuthz` policy (§12.2) plus the
+  DKIM-delegation / MX pointing the user performs (§7.3, §7.9), all of which are visible to the
+  user (a DNS act they take, an accountable identity token they present, §9). No hidden operator
+  hook can bill a user for traffic that did not cross the operator's gateway, and the attestation
+  chain is what makes that guarantee **checkable**, not merely promised.
+
+This is metering as **transparency**: the operator bills exactly the gateway operations the
+protocol makes cryptographically visible, and the user can independently audit the bill against the
+messages' own provenance — consistent with §12.3 and the honest-limits ethic (§12.5).

@@ -128,6 +128,8 @@ Payload {
   attach:   [* Attachment], // §2.5
   expires:  ?u64,           // requested expiry (client-enforced deletion)
   fs_ratchet: ?bytes,       // forward-secrecy ratchet material (§5.2)
+  provenance: ?[+ GatewayAttestation],  // sealed gateway-attestation chain (§7.8, §18.3.11);
+                            //   present iff gateway-touched, absent ⇒ provably pure-mesh
 }
 
 Headers {

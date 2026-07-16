@@ -342,6 +342,7 @@ Payload = {
   6 => [* Attachment],  ; attach      (§18.3.7)
   ? 7 => ts,            ; expires     requested client-enforced expiry
   ? 8 => bytes,         ; fs_ratchet  forward-secrecy ratchet material (§5.2)
+  ? 9 => [+ GatewayAttestation], ; provenance  sealed gateway-attestation chain (§18.3.11, §7.8); absent ⇒ pure-mesh
 }
 ```
 
@@ -355,6 +356,7 @@ Payload = {
 | `attach` | 6 | `[* Attachment]` | MUST (MAY be empty) | Attachments (§18.3.7). Small ones inline; large ones by manifest reference. |
 | `expires` | 7 | `ts` | OPTIONAL | Requested expiry; client-enforced deletion. MUST NOT exceed 1 year beyond `Envelope.ts` (§16.1); a larger value is clamped/ignored. |
 | `fs_ratchet` | 8 | `bytes` | OPTIONAL | Forward-secrecy ratchet material (§5.2). Opaque; interpreted by the MLS/ratchet layer. |
+| `provenance` | 9 | `[+ GatewayAttestation]` | OPTIONAL | The **sealed gateway-attestation chain** (§18.3.11, §7.8): one `GatewayAttestation` per legacy gateway that bridged this message, in temporal order. Present **iff** the message is **gateway-touched (legacy-origin)**; a native mesh message carries it **absent**, which is the **provable pure-mesh** signal (a legacy-origin message that lacked a valid attestation would be rejected at delivery, §7.2a / §19.3.1, so an *accepted* message with no `provenance` was never plaintext at a gateway). It rides **inside the sealed `Payload`** so the gateway identity, timing, and legacy-sender address it carries are visible **only to the recipient**, never to any mixnet intermediary (§7.8, §6.8). Covered by `Payload.sig` (the preimage is `Payload ∖ {2}`, §18.9.2) *and* each entry is independently signed by its domain-anchored `_dmtap-gw` key (§18.9.11). A **deniable** message (`DeniablePayload`, §18.3.10) MUST NOT carry it — deniable traffic is native P2P and never transits a gateway. |
 
 ### 18.3.6 `Headers` and `Body` (§2.4)
 
@@ -519,6 +521,47 @@ DeniablePayload = {
 | `attach` | 6 | `[* Attachment]` | MUST (MAY be empty) | Attachments (§18.3.7); per-file keys travel in `Attachment.key` as always. |
 | `expires` | 7 | `ts` | OPTIONAL | Requested client-enforced expiry (§2.4). |
 | ~~`sig`~~ | — | — | **FORBIDDEN** | A `DeniablePayload` MUST NOT carry any signature field. Its presence would make the transcript attributable and defeat the mode; a decoder that finds one MUST reject the message (`ERR_DENIABLE_SIGNATURE_PRESENT`, `0x040F`). |
+
+### 18.3.11 `GatewayAttestation` (§7.2a, §7.8)
+
+The **domain-anchored attestation** a legacy gateway signs when it bridges an inbound legacy
+message into the mesh (§7.2 step 4, §7.2a). §7.2a already REQUIRES this attestation and its
+DNS/KT-anchored key; this object is its **normative wire form**. One or more travel in
+`Payload.provenance` (§18.3.5 key 9), sealed inside the encrypted payload so they are visible
+**only to the recipient** (§7.8, §6.8). It is the seed of the whole transport-path provenance
+model: its **presence** proves the message was **gateway-touched / legacy-origin** (plaintext at
+a gateway before the mesh); its **absence** proves **pure-mesh** (never plaintext at a gateway,
+§7.8).
+
+```cddl
+GatewayAttestation = {
+  0 => 1,               ; disc       1 = legacy-inbound bridge attestation (§7.2a); other values reserved
+  1 => tstr,            ; domain     the domain whose `_dmtap-gw` key signs (§7.2a); the recipient-domain
+                        ;            entry MUST be the recipient's own domain
+  2 => tstr,            ; selector   `_dmtap-gw` selector naming the attestation key in DNS/KT
+  3 => ts,              ; recv_at    gateway receipt time T ("received via gateway G at T")
+  4 => hash,            ; msg_digest binds THIS attestation to the wrapped legacy message (§18.9.11)
+  ? 5 => tstr,          ; legacy_from  SMTP MAIL FROM, recipient-visible (sealed); informational
+  ? 6 => u8,            ; seq        position in a multi-gateway chain, 0-based; absent ⇒ 0 (single gateway)
+  7 => sig-val,         ; sig        signature by the `<selector>._dmtap-gw.<domain>` attestation key (§18.9.11)
+}
+```
+
+| Field | Key | Type | Presence | Meaning & constraints |
+|-------|----:|------|----------|-----------------------|
+| `disc` | 0 | `1` | MUST | Selects the legacy-inbound bridge attestation. Other discriminator values are reserved for future attestation kinds; an unknown value MUST be treated as an unverifiable attestation (`ERR_GATEWAY_ATTESTATION_INVALID`, `0x0601`), never silently ignored. |
+| `domain` | 1 | `tstr` | MUST | The domain whose `_dmtap-gw` attestation key (§7.2a) signs this entry. For the entry that bridged mail addressed to the recipient, `domain` MUST equal the **recipient's own domain** and is verified against **that** domain's `_dmtap-gw` record (§7.2a). Chained entries under other domains (§7.8) are verified only if their domain is in the recipient's explicitly-trusted gateway set, else surfaced as an *unverified* hop. |
+| `selector` | 2 | `tstr` | MUST | The `_dmtap-gw` selector naming the attestation public key: the verifier fetches `<selector>._dmtap-gw.<domain>` TXT (`v=dmtapgw1; k=…`, §7.2a), optionally KT-anchored, and checks `sig` against `k`. A key not published there is untrusted (`ERR_GATEWAY_ATTESTATION_KEY_UNTRUSTED`, `0x0602`). |
+| `recv_at` | 3 | `ts` | MUST | Gateway receipt time `T`. Part of the signed statement "received via gateway `domain` at `T`". |
+| `msg_digest` | 4 | `hash` | MUST | `0x1e ‖ BLAKE3-256(rfc5322_bytes)` over the exact legacy bytes the gateway wrapped (§18.9.11). The recipient MUST recompute it from the decrypted body and reject a mismatch (`0x0601`): this **binds the attestation to this one message**, so a valid attestation cannot be lifted onto different content. |
+| `legacy_from` | 5 | `tstr` | OPTIONAL | The SMTP `MAIL FROM` of the legacy sender. Recipient-visible (it is the recipient's own inbound mail) but sealed inside `Payload` so no intermediary sees it. Informational — display only; authenticity of the legacy leg is DKIM/SPF/DMARC at the gateway (§7.2), not this field. |
+| `seq` | 6 | `u8` | OPTIONAL | 0-based position in a multi-gateway chain (§7.8); absent ⇒ `0`. Entries in `Payload.provenance` are in temporal (ascending `seq`) order; the recipient-domain bridge is the last entry. |
+| `sig` | 7 | `sig-val` | MUST | Signature by the domain-anchored `_dmtap-gw` attestation key over the preimage of §18.9.11. A failure to verify ⇒ `0x0601`; the attestation MUST NOT be accepted, and an inbound legacy message with no valid attestation MUST NOT be surfaced as legacy-origin-verified (§7.2a, §19.3.1). |
+
+The gateway's `_dmtap-gw` attestation key is **distinct from** the gateway's delegated **DKIM**
+key (§7.3): DKIM authenticates the *outbound* legacy leg to the legacy world, while this
+attestation authenticates the *inbound* bridge to the mesh recipient. Neither is the user's DMTAP
+identity key, which the gateway never holds (§7.3).
 
 ---
 
@@ -1057,6 +1100,54 @@ Assertion = {
 | `sig` | 7 | `sig-val` | MUST | Signature by `from` over the origin-bound preimage **including `cnf`** (§18.9.8). A captured assertion cannot be replayed with an attacker-chosen session key because `cnf` is inside the signed preimage (session-hijack defense, §13.3). |
 | `cnf` | 8 | `hash` | MUST | Confirmation key = `H(session_pubkey)` (RFC 7800 style, §13.3 step 4). The client generates the per-RP, per-device session keypair **before** signing and commits it here; the RP MUST bind the session **only** to `cnf` (proof-of-possession, §13.4). Present on every native assertion, and embedded verbatim in a bridged ID Token (§13.6). |
 
+## 18.8 Client-facing transport-path provenance (§7.8, §8.6, §19.9)
+
+### 18.8.1 `ProvenanceRecord`
+
+The **client-facing** transport-path record. Unlike every other object in this appendix it is
+**not transmitted over the mesh**: the recipient's own node **assembles** it at reception and
+serves it to the owner's own devices over the authenticated JMAP / mesh client surface (§8.1,
+§8.6, §19.9), so a client can render the transport-path graph (§8.6). It composes two sources of
+truth with **different trust origins**, and the split is load-bearing for privacy (§6.8):
+
+- **Observed transport** (`tier`, `profile`, `min_hops`) — what the **recipient node itself
+  observed** about how the message arrived. It is **never** taken from a sender claim (a sender
+  cannot be trusted to state its own tier) and **never** enumerates or identifies a mix node.
+- **Verified gateway origin** (`origin`, `gateways`) — derived **solely** from the verified,
+  sealed `Payload.provenance` attestation chain (§18.3.11). Empty chain ⇒ `origin = 0` (pure-mesh);
+  ≥ 1 valid attestation ⇒ `origin = 1` (gateway-touched).
+
+```cddl
+ProvenanceRecord = {
+  1 => u8,                       ; tier      observed arrival tier: 1 = private (mixnet), 2 = fast (direct)
+  2 => u8,                       ; profile   mix profile evidenced: 0 = n/a (fast), 1 = standard, 2 = high-security
+  3 => u8,                       ; origin    0 = pure-mesh, 1 = gateway-touched (legacy-origin)
+  4 => [* GatewayAttestation],   ; gateways  verified attestation chain (§18.3.11), temporal order; empty iff origin = 0
+  ? 5 => u8,                     ; min_hops  COARSE guaranteed lower-bound hop count; NEVER node identities (§6.8)
+  ? 6 => ts,                     ; observed_at  recipient-node reception time
+}
+```
+
+| Field | Key | Type | Presence | Meaning & constraints |
+|-------|----:|------|----------|-----------------------|
+| `tier` | 1 | `u8` | MUST | The tier the message arrived on **as the recipient node observed it** (§4.6): `1` = `private` (peeled off the mixnet, §4.4), `2` = `fast` (direct/low-hop, §4.5). A recipient node knows this from *how it received the packet*; it is not a sender assertion. |
+| `profile` | 2 | `u8` | MUST | The mix profile the arrival is consistent with (§4.4.10): `0` = not applicable (`tier = 2`), `1` = Standard (≥ 3 hops), `2` = High-security (≥ 5 hops). For `private` this states the **minimum-viable-path guarantee that held** (§4.4.9), not a measured path. |
+| `origin` | 3 | `u8` | MUST | `0` = **pure-mesh** — no gateway attestation present, so the message was **never plaintext at a gateway** (the soundness of this claim rests on §7.2a making a gateway attestation mandatory for legacy-origin mail; §7.8). `1` = **gateway-touched / legacy-origin** — ≥ 1 verified attestation. |
+| `gateways` | 4 | `[* GatewayAttestation]` | MUST (MAY be empty) | The **verified** attestation chain copied from `Payload.provenance` (§18.3.11) **after** each entry's signature has been checked (§18.9.11); entries that failed verification are **excluded** (a message with an unverifiable required attestation is rejected upstream, §19.3.1, and never reaches this record). Empty **iff** `origin = 0`. Temporal order (ascending `seq`). |
+| `min_hops` | 5 | `u8` | OPTIONAL | A **coarse, privacy-safe lower bound** on hop count. For `private` it MUST equal the profile floor (`3` Standard / `5` High-security, §4.4.10) — the **guaranteed** minimum-viable-path length, **not** a measured or exact path, and it MUST NOT enumerate, identify, or count-beyond-the-floor the mixes traversed: the recipient node **cannot** know the full private path (that is precisely the mixnet's anonymity guarantee, §6.8) and MUST NOT synthesize one. For `fast` it MAY reflect the directly-observed hop (`1`), which exposes nothing beyond what `fast` already reveals (§6.5). |
+| `observed_at` | 6 | `ts` | OPTIONAL | The recipient node's reception time. Local; never leaves the owner's device cluster. |
+
+**Privacy invariants (normative, §6.8).** A `ProvenanceRecord`:
+
+1. MUST be delivered **only** over the owner's authenticated client surface (§8.1) to the owner's
+   own device cluster (§8.3); it MUST NOT be attached to, embedded in, or forwarded on any MOTE
+   sent to a third party.
+2. MUST NOT contain any mix-node identity, address, per-hop timing, path descriptor, or any datum
+   from which the private-tier path could be reconstructed. `min_hops` is a **profile floor**, not
+   a path. This keeps provenance a statement about **which trust boundaries a message crossed**,
+   never **which nodes** carried it (§6.8) — it therefore reveals nothing an honest recipient
+   could not already infer, and cannot weaken sealed sender or mixnet anonymity (§12.3, §6.2).
+
 ---
 
 ## 18.9 Canonical signing & hashing preimages (normative)
@@ -1088,6 +1179,7 @@ every signature is over `DS-tag ‖ det_cbor(object∖sig)`, where:
 | `GroupEvent` | `committer_sig` (k6) | `DMTAP-v0/group-event` | `det_cbor(GroupEvent ∖ {6})` |
 | `PostageStamp` | `sig` (k7) | `DMTAP-v0/postage-stamp` | `det_cbor(PostageStamp ∖ {7})` |
 | `Vouch` | `sig` (k5) | `DMTAP-v0/vouch` | `det_cbor(Vouch ∖ {5})` |
+| `GatewayAttestation` | `sig` (k7) | `DMTAP-v0/gateway-attest` | §18.9.11 (`det_cbor(GatewayAttestation ∖ {7})`) |
 | `Assertion` | `sig` (k7) | `DMTAP-v0/auth-assertion` | §18.9.8 |
 | `DeniablePrekeyBundle` | `sig` (k10) | `DMTAP-v0/deniable-prekeys` | `det_cbor(DeniablePrekeyBundle ∖ {10})` (§18.9.10) |
 | `DeniablePrekeyBundle` | `spk_sig` (k4) | `DMTAP-v0/deniable-spk` | the raw `spk` bytes (field 3) (§18.9.10) |
@@ -1267,6 +1359,35 @@ The envelope that carries a deniable frame still bears `Envelope.sender_sig` (§
 is a **fresh per-message ephemeral** signature over routing metadata that binds **no long-term
 identity** — it gates abuse (§9) without attributing the transcript, so it is deniability-neutral.
 
+### 18.9.11 `GatewayAttestation.sig` and `msg_digest`
+
+The attestation signature uses the general rule under the **domain-anchored** `_dmtap-gw` key
+(§7.2a), **not** any DMTAP identity key and **not** the gateway's DKIM key (§7.3):
+
+```
+msg_digest  = 0x1e ‖ BLAKE3-256( rfc5322_bytes )     ; the EXACT legacy bytes the gateway wrapped
+preimage    = "DMTAP-v0/gateway-attest" ‖ 0x00 ‖ det_cbor(GatewayAttestation ∖ {7})
+sig         = Sign(sk_gw_attest, preimage)           ; sk_gw_attest ↔ <selector>._dmtap-gw.<domain> "k="
+```
+
+`msg_digest` (key 4) is inside the signed body, so the signature binds the attestation to **this
+specific message**: a verifier recomputes `0x1e ‖ BLAKE3-256` over the decrypted RFC 5322/MIME
+body and MUST reject a mismatch (`ERR_GATEWAY_ATTESTATION_INVALID`, `0x0601`) — an attestation
+lifted onto other content fails this bind. The verifying key is looked up at
+`<selector>._dmtap-gw.<domain>` (DNS + optional KT anchor, §7.2a); a key not published there, or
+under a `domain` the recipient does not trust for the recipient-domain entry, is untrusted
+(`ERR_GATEWAY_ATTESTATION_KEY_UNTRUSTED`, `0x0602`). Verification runs **after** decryption
+(the attestation is sealed in `Payload`), at `deliver` step 8a (§19.3.1).
+
+### 18.9.12 `ProvenanceRecord` carries no signature
+
+`ProvenanceRecord` (§18.8.1) is **not signed and not transmitted over the mesh**: it is a
+node-local, client-facing assembly served only to the owner's own devices (§8.6, §19.9). Its
+`gateways` field consists of `GatewayAttestation` entries **already** verified per §18.9.11; the
+record itself needs no signature because it never crosses a trust boundary — it is authenticated
+by the authenticated client channel it is delivered on (§8.1), exactly like a `Mailbox` CRDT view
+(§5.6). Adding a signature would serve nothing and is not defined.
+
 ---
 
 ## 18.10 Collected CDDL grammar (copy-paste block)
@@ -1325,6 +1446,14 @@ KeyPackageRef = { 1 => hash, 2 => suite, ? 3 => tstr }
 Payload = {
   1 => ik-pub, 2 => sig-val, 3 => Headers, 4 => Body,
   5 => [* hash], 6 => [* Attachment], ? 7 => ts, ? 8 => bytes,
+  ? 9 => [+ GatewayAttestation],   ; 9 = sealed gateway-attestation chain (§18.3.11, §7.8); absent ⇒ pure-mesh
+}
+
+; Sealed inside Payload; signed by the domain-anchored _dmtap-gw key (§7.2a, §18.9.11), NOT a
+; DMTAP identity or DKIM key. Present iff gateway-touched (legacy-origin); absent ⇒ pure-mesh.
+GatewayAttestation = {
+  0 => 1, 1 => tstr, 2 => tstr, 3 => ts, 4 => hash,
+  ? 5 => tstr, ? 6 => u8, 7 => sig-val,
 }
 
 Headers = {
@@ -1458,6 +1587,15 @@ Assertion = {
   1 => tstr, 2 => bytes, 3 => ts, 4 => ts, 5 => tstr,
   6 => ik-pub, 7 => sig-val, 8 => hash,
 }
+
+; ── client-facing provenance (§7.8, §8.6, §19.9) ───────────────────
+; NODE-LOCAL: assembled by the recipient node, served only to the owner's own devices; NOT
+; mesh-transmitted, NOT signed (§18.9.12). `gateways` are GatewayAttestations already verified
+; (§18.9.11). min_hops is a COARSE profile floor, NEVER mix-node identities (§6.8).
+ProvenanceRecord = {
+  1 => u8, 2 => u8, 3 => u8, 4 => [* GatewayAttestation],
+  ? 5 => u8, ? 6 => ts,
+}
 ```
 
 ---
@@ -1522,18 +1660,31 @@ resolves each explicitly rather than picking one silently; each SHOULD be reconc
    existing signature computation changes. These SHOULD get a review pass against a reference
    implementation.
 
+10. **Transport-path provenance (newly formalized).** §7.2a already REQUIRED the gateway
+    attestation but gave it no CBOR; this appendix formalizes it as `GatewayAttestation`
+    (§18.3.11), carried in the new OPTIONAL `Payload.provenance` (key 9) — additive, and covered
+    by the existing `Payload.sig` preimage (`Payload ∖ {2}`), so no existing signature computation
+    changes. The client-facing `ProvenanceRecord` (§18.8.1) is **node-local and unsigned** by
+    design (§18.9.12): it never crosses a trust boundary and MUST NOT carry mix-node identities
+    (§6.8), so it is deliberately *not* a mesh wire object. Both SHOULD get a review pass against a
+    reference implementation. The gateway attestation reuses the DNS/KT `_dmtap-gw` anchor already
+    registered in §21.21 and the existing errors `0x0601`/`0x0602`; no new error code or registry
+    is introduced.
+
 **Object count:** this appendix gives a normative CDDL rule and a per-field semantics table for
-**31 wire objects** — `Envelope`, `DeliveryTag`, `ChallengeResponse`, `KeyPackageRef`, `Payload`,
+**33 wire objects** — `Envelope`, `DeliveryTag`, `ChallengeResponse`, `KeyPackageRef`, `Payload`,
 `Headers`, `Body`, `Attachment`, `ManifestRef`, `Manifest`, `DeniableFrame`, `DeniablePayload`,
-`Identity`, `DeviceCert`, `KeyPackageBundleRef`, `DeniablePrekeyBundle`, `RecoveryPolicy`,
-`RecoveryMethod`, `Threshold`, `KeyRotation`, `MoveRecord`, `DomainDirectory`, `DirEntry`,
-`LocationRecord`, `MixNodeDescriptor`, `MixDirectory`, `GroupState`, `RosterEntry`, `GroupEvent`,
-`Challenge`, `Assertion` — plus their tagged sub-variants (`KeyTag`/`GroupTag`/`BlindedTag`;
-`ArcToken`/`PowSolution`/`PostageStamp`/`Vouch`; `DeniableInit`/`DeniableMessage`;
-`PhraseMethod`/`DeviceMethod`/`SocialMethod`; `MethodPredicate`; `MixKeyEntry`) and the shared
-scalar prelude (§18.1.7). Counting the five choice-variant families, `MethodPredicate`, and
-`MixKeyEntry` as distinct encodable structures brings the total to **46 CDDL-defined structures**,
-all collected in §18.10. (The two mixnet objects `MixNodeDescriptor`/`MixDirectory` plus
+`GatewayAttestation`, `Identity`, `DeviceCert`, `KeyPackageBundleRef`, `DeniablePrekeyBundle`,
+`RecoveryPolicy`, `RecoveryMethod`, `Threshold`, `KeyRotation`, `MoveRecord`, `DomainDirectory`,
+`DirEntry`, `LocationRecord`, `MixNodeDescriptor`, `MixDirectory`, `GroupState`, `RosterEntry`,
+`GroupEvent`, `Challenge`, `Assertion`, `ProvenanceRecord` — plus their tagged sub-variants
+(`KeyTag`/`GroupTag`/`BlindedTag`; `ArcToken`/`PowSolution`/`PostageStamp`/`Vouch`;
+`DeniableInit`/`DeniableMessage`; `PhraseMethod`/`DeviceMethod`/`SocialMethod`; `MethodPredicate`;
+`MixKeyEntry`) and the shared scalar prelude (§18.1.7). Counting the five choice-variant families,
+`MethodPredicate`, and `MixKeyEntry` as distinct encodable structures brings the total to
+**48 CDDL-defined structures**, all collected in §18.10. (`GatewayAttestation` is the §7.2a/§7.8
+transport-path binding, sealed in `Payload`; `ProvenanceRecord` is the §8.6/§19.9 client-facing
+assembly — node-local, not mesh-transmitted, not signed, §18.9.12.) (The two mixnet objects `MixNodeDescriptor`/`MixDirectory` plus
 `MixKeyEntry` are the §4.4 mixnet binding; the deniable `DeniableFrame`/`DeniableInit`/
 `DeniableMessage`/`DeniablePayload`/`DeniablePrekeyBundle` are the §5.2.1 binding; the Sphinx
 packet and the Double-Ratchet/X3DH/PQXDH cryptographic cores are specified by reference — Sphinx

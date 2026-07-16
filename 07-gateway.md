@@ -130,3 +130,95 @@ So DMTAP does not attempt it. Fairness is achieved by the four mechanisms below 
 The result is stronger than a mandate could enforce: because you can always route around,
 self-serve, or switch — and because accountability makes genuinely-open gateways survivable —
 no operator can act as a gatekeeper, without any unenforceable obligation being imposed.
+
+## 7.8 Transport-path provenance (what a recipient can prove about a message's path)
+
+The gateway attestation of §7.2a is not only an anti-spoofing check — it is the **seed of a
+verifiable transport-path provenance model**. A recipient (and only the recipient) can learn and
+verify **which trust boundaries a message crossed on its way in**, enough for a client to render a
+transport-path graph (§8.6), **without** learning anything the mesh is designed to hide. The model
+has three parts.
+
+### 7.8.1 What a recipient can learn (and what it deliberately cannot)
+
+**(a) Transport tier.** Whether the message arrived on the **`private`** tier (mixnet + cover,
+§4.4) or the **`fast`** tier (direct/low-hop, §4.5). The recipient node knows this from *how it
+received the packet* — it is an **observation**, not a sender claim.
+
+**(b) Gateway-touched vs. pure-mesh.** A message that transited a **legacy gateway** carries that
+gateway's §7.2a attestation (`GatewayAttestation`, §18.3.11) sealed inside its `Payload`
+(§18.3.5 key 9) ⇒ it is **legacy-origin / gateway-touched**: it was plaintext at a gateway before
+the mesh. A **native** DMTAP↔DMTAP message carries **no attestation at all** ⇒ it is
+**provably pure-mesh — never plaintext at any gateway**, end-to-end encrypted the whole way. This
+inference is **sound** precisely because §7.2a makes the attestation **mandatory** for legacy
+mail and requires the recipient to **reject** unattested legacy-origin mail (`0x0601`/`0x0602`,
+§19.3.1): so every *accepted* message is either validly attested (gateway-touched) or attestation-
+free (pure-mesh) — there is no third state in which legacy plaintext slips in unmarked.
+
+**(c) A coarse, privacy-safe hop descriptor.** For the `private` tier the recipient learns only the
+**profile floor** the message satisfied — `≥ 3` hops (Standard) or `≥ 5` (High-security), §4.4.10 —
+**never** the identities, addresses, count-beyond-the-floor, or per-hop timing of the mixes it
+traversed. **This is intentional and is the privacy guarantee, not a gap:** the private tier is
+*designed* so no party — including the recipient's own node — can reconstruct the path (§6.2,
+§4.4). Provenance therefore answers **"which trust boundaries did this cross?"** (a mixnet? a
+gateway? whose?) — **never "which nodes carried it?"**. For the `fast` tier the descriptor MAY note
+the directly-observed hop, which exposes nothing beyond what `fast` already reveals (the graph is
+observable on `fast`, §4.6, §6.5).
+
+### 7.8.2 The provenance record
+
+The recipient node assembles a **`ProvenanceRecord`** (§18.8.1) at reception, composing the
+**observed** transport (tier/profile/coarse-hops, part (a)/(c)) with the **verified** sealed
+attestation chain (part (b)). It is **node-local** — served only to the owner's own devices over
+the authenticated client surface (§8.1, §19.9), never attached to a MOTE or shown to any third
+party — and it carries **no mix-node identity** (§6.8). The gateway attestation it verifies
+(`GatewayAttestation`, §18.3.11) travels **sealed inside the encrypted `Payload`**, so the gateway
+identity, receipt time, and legacy-sender address it names are visible **only to the recipient** —
+they are **never** exposed to a mixnet intermediary, preserving §6 metadata privacy in full.
+
+### 7.8.3 Chaining multiple gateways
+
+If more than one gateway bridges a message (uncommon; the dominant case is a single inbound
+gateway), `Payload.provenance` carries an **ordered chain** of `GatewayAttestation`s (`seq`,
+§18.3.11). Each entry is verified independently against the `_dmtap-gw` key published under **its
+own `domain`**; the entry that bridged mail for the recipient MUST verify under the **recipient's
+own domain** (§7.2a), and entries under other domains verify only if that domain is in the
+recipient's explicitly-trusted gateway set, else they are surfaced as an *unverified hop*. **One**
+valid attestation already establishes *gateway-touched*; the chain merely shows the full legacy
+path. A **deniable** message (§5.2.1) never carries a chain — deniable traffic is native P2P and
+never transits a gateway.
+
+## 7.9 Self-host `@host.net`, gateways, and billing
+
+DMTAP is explicit about who pays for what, and the provenance model (§7.8) makes it
+**auditable**.
+
+- **You may self-host your own domain.** A domain owner MAY run their **own node** for
+  `you@host.net` — Tier C (§3.8), self-hosted domain authority (§3.10.1) — and reach every other
+  DMTAP user **natively over the mesh with no gateway and no operator at all** (§7.7 self-host
+  backstop). Native mesh delivery is **key-based and free**: no gateway is involved, so **nothing
+  is billable** for it — this is the §12.3 inviolable rule (the seam meters *operations*, never
+  native delivery or any privacy/crypto path).
+- **Reaching the legacy world uses a gateway, and *that* is the billable event.** To exchange mail
+  with legacy (`@gmail.com` etc.) a self-hoster uses a **gateway** — either **their own**
+  (self-hosted `--gateway`, §7; then they bear only the IP-reputation cost, and there is no
+  third-party bill) or a **third-party operator's**. Billing attaches to **gateway operations
+  only** — metered legacy sends/receives (§12.2 Metering, §12.6) — **never** to native mesh
+  delivery. Exactly the messages that carry (outbound) or receive (inbound) a §7.2a attestation are
+  the ones a bill can reference; a pure-mesh message (§7.8.1(b)) is by construction **not** a
+  gateway operation and **not** billable.
+- **How a self-hoster is authorized by a third-party gateway.** Using someone else's gateway is a
+  **relationship the gateway operator's policy governs** (`GatewayAuthz`, §12.2), not a protocol
+  entitlement: the operator authorizes the self-hoster's identity (per-identity accountable token,
+  §9), the self-hoster **delegates a DKIM selector** to that gateway for outbound (§7.3, §3.8) and
+  points **inbound MX** at it for legacy receipt (§7.2), and the operator meters and bills the
+  resulting legacy egress/ingress. Because DKIM delegation is a DNS change with **zero lock-in**
+  (§7.7), a self-hoster can switch or drop the gateway at any time and fall back to native-only or
+  to self-hosting the gateway.
+- **The bill is auditable to the user.** Because every gateway-touched message carries a verifiable
+  §7.2a attestation naming the gateway `domain` and receipt time, a user can **cryptographically
+  confirm** that each billed legacy operation corresponds to a real message that actually used the
+  gateway — "you were billed because *this* message used the gateway" is checkable against the
+  message's own `ProvenanceRecord` (§18.8.1, §7.8), not taken on trust. Conversely, a message the
+  client shows as **pure-mesh** MUST NOT appear on a gateway bill. This closes the loop between the
+  §12 billing seam and what the user can independently verify (§12.7).
