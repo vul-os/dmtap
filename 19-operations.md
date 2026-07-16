@@ -2395,10 +2395,15 @@ still reads "see §19.10," it now inherits the pinned §16.8/§5.1 values descri
    via the **RP delegation re-validation interval ≤ 15 min** (plus session TTL 24 h / idle 30 min),
    so a revoked session cannot outlive the next RP status/KT re-check by more than that window.
    §19.6.4's "stale cache" failure mode inherits this bound.
-5. **Auto-forward / delegate-attribution headers** (referenced from §17, not restated as an
+5. **Delegate-attribution header** (referenced from §17 items 23/43, not restated as an
    operation here because no wire object exists for it yet) — **OPEN.** Out of this appendix's
-   scope since there is no operation to specify without the `Headers.ext` convention §17.6
-   recommends; not double-counted in the operation total below.
+   scope since there is no operation to specify without the `Headers.ext` convention that §17.6
+   and §21.20 flag as a deferred future registration; not double-counted in the operation total
+   below. *(The auto-forward rule-change **auditing** that earlier drafts bundled into this item
+   is now separately **RESOLVED** — normative in §8.5 and §13.5: every forwarding/redirection-rule
+   change replicates to the owner's device cluster (§5.6) and is logged to KT self-monitoring
+   (§3.5), with silent, unlogged installation prohibited. It needs no operation or wire object of
+   its own, being node-local CRDT state signed by an `IK`-authorized device key.)*
 6. **Node liveness timeout that triggers committer failover** (§19.5.5 precondition 2, §5.1).
    **RESOLVED.** §16.8 now fixes the **committer-liveness timeout = 5 min** plus a
    **takeover hysteresis of 2 consecutive misses** (avoiding churn on transient NAT/relay blips),

@@ -175,17 +175,23 @@ survive translation, and that is correct, not a bug).
   to exfiltrate mail after a credential compromise) — the same attack is *possible* here if an
   attacker gains node/admin access, since forwarding-rule changes are ordinary local
   configuration, not a signed identity-lifecycle object.
-- **Security:** Same residual risk as legacy for this specific attack (it's a node-compromise
-  consequence, not a protocol flaw), but DMTAP has the machinery to do *better*: identity and
-  recovery-policy changes are logged and self-monitored for owner alerting (§3.5); auto-forward
-  rule changes currently are not analogous first-class signed/logged objects.
-- **Open issue:** **Gap.** Recommend implementations surface auto-forward rule changes through
-  the same device-cluster-notification path used for read/flag sync (§5.6), so a newly added
-  silent forwarding rule is visible to the owner's other devices, mirroring the KT
-  self-monitoring pattern (§3.5) that already protects identity/recovery changes. This is a
-  direct consequence of the all-data-classes decentralization invariant (§8.5): a forwarding
-  rule is node-local state and MUST replicate to every device like any other data class, so
-  none is blind to it. Not currently specified (tracked as §19.10 gap 5 / §17.6 #5).
+- **Security:** Same residual risk as legacy for the pure *node-compromise* case (an attacker
+  with node/admin access can add a rule — a node-compromise consequence, not a protocol flaw),
+  but DMTAP closes the *silent-injection* half that makes the legacy attack covert. Because a
+  forwarding rule is device-cluster state (§5.6) authored by an `IK`-authorized device key, its
+  creation or modification is a normative owner-visible, logged event: **§8.5 and §13.5 require
+  every auto-forward / redirection-rule change to be routed through the device-cluster
+  notification + KT self-monitoring path (§3.5)** — exactly like an identity, recovery-policy,
+  or capability-delegation change — and **silent, unlogged installation is prohibited** (§13.5).
+  The covert-exfiltration variant that plagues legacy Gmail/Exchange is therefore alertable here.
+- **Open issue:** **Resolved.** Auto-forward rule-change auditing is now normative: §8.5 (the
+  all-data-classes decentralization invariant) and §13.5 (owner-visible grants / BEC defense)
+  make every auto-forward/redirection-rule change replicate to the owner's device cluster (§5.6)
+  and log to KT self-monitoring (§3.5), with silent, unlogged installation prohibited. No new
+  wire object is needed — a forwarding rule is node-local CRDT state signed by an `IK`-authorized
+  device key. (The only residual §17.6 item near this is the *cosmetic* delegate-attribution
+  `Headers.ext` marker of items 23/43, a deliberately-deferred future registration, §21.20 —
+  a separate concern from this auditing guarantee, tracked as §19.10 gap 5 / §17.6 #4.)
 
 #### 13. Vacation / auto-responder / out-of-office — **Different (improved)**
 - **How:** A client/node-local automation: reply-once-per-sender-per-window with a template.
@@ -752,7 +758,7 @@ survive translation, and that is correct, not a bug).
 | 9 | Signatures (text) | Clean | Client-local, unrelated to crypto `sig` |
 | 10 | Aliases + plus-addressing | Clean | `Identity.names` list (§3.9.4); non-spoofable |
 | 11 | Forwarding (manual) | Different | Works; forged-`From:` redirect correctly impossible |
-| 12 | Auto-forward | Different | Works; rule-change auditing not yet specified (gap) |
+| 12 | Auto-forward | Different | Works; rule-change auditing is normative — owner-visible + logged, silent installation prohibited (§8.5, §13.5) |
 | 13 | Vacation/auto-responder | Different | Improved: no backscatter (authenticated senders) |
 | 14 | Read receipts | Clean | `kind=0x07`, opt-in, off by default (§2.3, §6) |
 | 15 | Scheduled send | Clean | Node holds MOTE until send time |
@@ -823,12 +829,15 @@ Ranked by how load-bearing the gap is:
    real gap versus legacy's `Sender:`/"on behalf of" distinction. The delegation itself is the
    capability model of **§13.5** (`DeviceCert.caps`/UCAN-style scoping), so the marker should
    name the delegated capability from there; this is the same open item tracked as §19.10 gap 5.
-5. **Auto-forward rule-change auditing** (item 12) — silent forwarding-rule injection is a
-   live real-world account-takeover technique; recommend surfacing rule changes through the
-   same device-cluster-notification path already used for identity/KT self-monitoring (§3.5),
-   consistent with the all-data-classes decentralization invariant of **§8.5** (a forwarding
-   rule is node-local state that MUST replicate to the owner's other devices the same way mail/
-   calendar/contact state does, so no device is blind to it).
+5. **Auto-forward rule-change auditing** (item 12) — **resolved.** Silent forwarding-rule
+   injection is a live real-world account-takeover technique; **§8.5** (all-data-classes
+   decentralization invariant) and **§13.5** (owner-visible grants / BEC defense) now make every
+   auto-forward/redirection-rule change a normative MUST-log, owner-visible event — replicated to
+   the owner's device cluster (§5.6) and surfaced through the KT self-monitoring path (§3.5), with
+   silent, unlogged installation prohibited. This needs no new cryptography or wire object: a
+   forwarding rule is node-local CRDT state signed by an `IK`-authorized device key. (The
+   *cosmetic* delegate-attribution `Headers.ext` marker once bundled with this item is a separate,
+   deliberately-deferred future registration — see item 4 and §21.20.)
 6. **Explicit naming of "shared address book" / "shared calendar" as named constructs** (items
    32, 42) — the mechanism (MLS group over a data-class's MOTEs) is sound and consistent with
    how §5.5/§5.7 name shared file folders, but §8.4 doesn't spell it out the same way for
