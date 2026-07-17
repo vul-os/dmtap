@@ -312,10 +312,17 @@ counter guards against stale-replay suppression: `caps_version` (§10.2), `Ident
 `LocationRecord.seq` (§4.2), and `GroupState.version` (§5.8.2). Specifically:
 
 - A reader **retains the highest `seq` it has accepted per author feed** (keyed by `pub`).
-- A reader MUST **reject any `FeedHead` whose `seq` is older-than-or-equal-to** the last accepted for
+- A reader MUST **reject any `FeedHead` whose `seq` is strictly less than** the last accepted for
   that `pub` (`ERR_PUB_FEED_ROLLBACK`, `0x0907`). Feeds only ever grow; a stale head cannot
   *suppress* announcements a publisher has since made (the public-feed analogue of a capability-
-  suppression downgrade, §10.2).
+  suppression downgrade, §10.2). An **equal** `seq` is *not* a rollback — a feed head is a
+  cacheable object a reader legitimately re-fetches, and re-presenting the current tip must be
+  idempotent, not an error. On equal `seq` the reader instead compares `tip`: identical ⇒ accept
+  (no-op); different ⇒ two heads claim the same position, which is equivocation, handled as a
+  chain fork (`ERR_PUB_FEED_CHAIN_BROKEN`, `0x0908`, below) — never as a rollback. *(This
+  deliberately differs from the strict `≤` rejection used by `caps_version`/`Identity.version`,
+  which are push-delivered announcements a peer should never replay at the same version; a public
+  feed head is pull-fetched and MUST tolerate the reader fetching the same tip twice.)*
 - The `prev` hash-chain makes a **fork detectable**: two distinct `FeedEntry`s at the same `seq` with
   the same `prev` — or a `prev` that does not resolve to the entry at `seq-1` — is evidence that the
   author's own log was rewritten or equivocated. This is `ERR_PUB_FEED_CHAIN_BROKEN` (`0x0908`),
@@ -514,7 +521,7 @@ implementation of `pub-1` enforces every row.
 | **Announce content-address bind** | §22.3.1, §22.3.3 | recomputed `announce_id` ≠ the address it was fetched by | reject; `ERR_PUB_ANNOUNCE_ID_MISMATCH` `0x0905`, DROP_SILENT |
 | **Announce signature + IK chain** | §22.3.1, §22.3.3 | `sig` fails under `signer`, or `signer` is not authorized by `pub` (DeviceCert chain, §1.2) | reject; `ERR_PUB_ANNOUNCE_SIG_INVALID` `0x0904`, FAIL_CLOSED_BLOCK |
 | **Supersede is same-author** | §22.3.4 | `supersedes` references an announce whose `pub` differs from this one | reject the revision link; `ERR_PUB_SUPERSEDE_INVALID` `0x090B`, FAIL_CLOSED_BLOCK — a publisher may only supersede its own announcements |
-| **Feed `seq` anti-rollback** | §22.4.2 | a `FeedHead` with `seq` ≤ the highest accepted for that `pub` | reject the stale head, retain the higher tip; `ERR_PUB_FEED_ROLLBACK` `0x0907`, FAIL_CLOSED_BLOCK — same rule as `caps_version`/`Identity.version`/`LocationRecord.seq` |
+| **Feed `seq` anti-rollback** | §22.4.2 | a `FeedHead` with `seq` strictly below the highest accepted for that `pub` | reject the stale head, retain the higher tip; `ERR_PUB_FEED_ROLLBACK` `0x0907`, FAIL_CLOSED_BLOCK. Equal `seq` + identical `tip` ⇒ idempotent re-fetch, accept; equal `seq` + different `tip` ⇒ equivocation, `0x0908` HALT_ALERT — never a rollback |
 | **Feed hash-chain integrity (fork)** | §22.4.2 | two `FeedEntry`s at one `seq` with the same `prev`, or a `prev` not resolving to `seq-1` | `ERR_PUB_FEED_CHAIN_BROKEN` `0x0908`, HALT_ALERT — same posture as a committer fork (`0x0404`) / cluster-journal break (`0x0412`); publish the conflicting entries as evidence |
 | **Feed head signature** | §22.4.1 | `FeedHead.sig` fails under `signer`/`pub` chain | reject; `ERR_PUB_FEED_SIG_INVALID` `0x0906`, FAIL_CLOSED_BLOCK |
 | **Unknown PUB version/suite** | §22.3.1, §22.4.1 | a `PubAnnounce`/`PubManifest`/`FeedHead` carrying a `v`/`suite` the implementation does not support | reject, never guess; `ERR_PUB_UNSUPPORTED_VERSION` `0x0901`, FAIL_CLOSED_BLOCK — the extension analogue of the unknown-suite rule (§1.1, `0x0101`) |
@@ -583,7 +590,7 @@ initial, authoritative contents.
 | `0x0904` | `ERR_PUB_ANNOUNCE_SIG_INVALID` | `PubAnnounce` verification (§22.3.3) | `sig` fails under `signer`, or `signer` is not authorized by `pub` (DeviceCert chain). | No | FAIL_CLOSED_BLOCK |
 | `0x0905` | `ERR_PUB_ANNOUNCE_ID_MISMATCH` | `PubAnnounce` fetch (§22.3.1, §22.3.3) | The recomputed `announce_id` does not equal the content address the object was fetched by. | Yes (re-fetch) | DROP_SILENT |
 | `0x0906` | `ERR_PUB_FEED_SIG_INVALID` | `FeedHead` verification (§22.4.1) | `FeedHead.sig` fails under `signer`/`pub` chain. | No | FAIL_CLOSED_BLOCK |
-| `0x0907` | `ERR_PUB_FEED_ROLLBACK` | Feed head anti-rollback (§22.4.2) | A `FeedHead` presents `seq` ≤ the highest already accepted for that author feed (stale replay / suppression). | No | FAIL_CLOSED_BLOCK — retain the higher tip |
+| `0x0907` | `ERR_PUB_FEED_ROLLBACK` | Feed head anti-rollback (§22.4.2) | A `FeedHead` presents `seq` strictly below the highest already accepted for that author feed (stale replay / suppression). Equal `seq` is idempotent re-fetch (identical `tip`) or equivocation (`0x0908`), never this error. | No | FAIL_CLOSED_BLOCK — retain the higher tip |
 | `0x0908` | `ERR_PUB_FEED_CHAIN_BROKEN` | Feed chain integrity (§22.4.2) | Two `FeedEntry`s at one `seq` with the same `prev`, or a `prev` not resolving to `seq-1` — a fork/rewrite of the author's own log. | No | HALT_ALERT — publish the conflicting entries as evidence |
 | `0x0909` | `ERR_PUB_MANIFEST_HASH_MISMATCH` | `PubManifest` integrity (§22.2.2) | The recomputed DS-tagged Merkle root does not equal `PubManifest.id`. | No | DROP_SILENT — do not begin fetch |
 | `0x090A` | `ERR_PUB_CHUNK_HASH_MISMATCH` | Public swarm fetch (§22.5.3, §5.5.3) | A fetched plaintext chunk fails to verify against its listed `h_i`. | Yes (re-fetch from another holder) | ROTATE_RETRY |
