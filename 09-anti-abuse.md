@@ -121,6 +121,19 @@ hashcash asymmetry favors organized spammers (botnets/GPUs) over low-power legit
 asymmetry, and difficulty SHOULD be adaptive. Prefer the token/reputation path (§9.3) whenever
 available.
 
+**Bounding verification cost — the verifier's own memory-hard budget (normative).** A memory-hard
+Argon2id verification is **symmetric**: checking a solution costs the recipient roughly what
+producing it cost the sender. Because the cold-sender gate runs this check **before** any per-source
+cap can apply (§2.7 step 6 precedes identity), a flood of **bogus** PoW attachments is itself a
+memory/CPU **DoS on the recipient** — the attacker forces expensive verifications for free. A
+recipient therefore MUST **bound the number of memory-hard PoW verifications it performs per time
+window, per delivering connection/relay** (§16.5). Beyond that budget the recipient MUST **defer the
+MOTE to the requests area WITHOUT verifying** its PoW (`DEFER_REQUESTS`, §2.7a) — never spend
+unbounded memory-hard work on unauthenticated input, and never fail *open* by accepting it. This is
+one more reason PoW is the **rate-capped last resort**: the ARC token / postage paths (§9.3, §9.5)
+verify **cheaply** (a signature check), so they impose no symmetric-cost DoS surface and are always
+preferred over PoW.
+
 ## 9.5 Postage (economic tier + gateway funding)
 
 **Postage** is a signed, prepaid, real-money credit voucher (NOT a cryptocurrency):

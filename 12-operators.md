@@ -307,14 +307,29 @@ flag day — the same dual-stack machinery that lets it *add* them:
 2. **Ratchet.** As peers advertise the successor, the **suite high-water-mark** (§1.3) and
    **monotonic capability version** (§10.2, `0x030A`) make the upgrade *stick* per contact — a peer
    cannot be silently rolled back to the retiring mechanism (SP-8, §10.7.1).
-3. **Retire.** The owner performs an explicit `IK`-authorized retirement (§1.5) — e.g. a
-   `classical_retired` marker in `Identity` (§1.3) — which is the **only** way a high-water-mark
+3. **Retire.** The owner performs an explicit `IK`-authorized retirement — a `classical_retired`
+   marker in `Identity` (**§1.3**, the suite-ratchet floor; the marker travels in the signed
+   `Identity` object, not the key-rotation path §1.5) — which is the **only** way a high-water-mark
    lowers, making rejection of the retired mechanism unconditional. A verifier that cannot validate a
    peer's highest offered suite fails closed rather than downgrading (§1.3, §10.1).
 
 The retirement is thus **monotone and per-contact**: no global cutover, no window in which an
 adversary can force the old mechanism, and no user stranded because their counterpart has not yet
 upgraded (they interoperate on the highest mutual capability until the owner retires the old one).
+
+**Honest limit — retirement is per-owner and slow; there is no global kill-switch (by design).**
+Because a high-water-mark lowers only through **each owner's own `IK`-authorized** action (§1.3), a
+compromised primitive is retired **identity-by-identity, at the pace owners act** — not
+network-wide by fiat. This is deliberate **anti-capture**: a global "disable suite X everywhere"
+lever would itself be a single point an adversary, or a coerced authority, could pull to **force** a
+downgrade. The residual is disclosed, not hidden: a slow retirement tail during which un-upgraded
+owners still accept a weakened primitive (the same reason suite `0x03` is **pre-reserved** as a
+standing AEAD-diverse target, §1.1, so the migration itself is ready before it is needed). As an
+**OPTIONAL, advisory-only** mitigation, a quorum of independent, KT-anchored operators
+(mix/gateway/log authorities, §12.8.6) MAY publish a **KT-logged "suite-compromise advisory"** that
+clients MAY surface to prompt owners to retire faster. It is **never mandatory, never automatic, and
+never itself lowers a high-water-mark** — only the owner's `IK` can — so it informs without becoming
+the very central kill-switch the design refuses.
 
 ### 12.8.6 Operator onboarding & offboarding (gateway + mix)
 

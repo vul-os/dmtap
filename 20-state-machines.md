@@ -67,7 +67,8 @@ cannot and need not distinguish the two), `retry_timer_fires` [§16.1: backoff],
 | `IN_FLIGHT` | `ack_received` | `ACKED` | Cancel deadline timer; mark delivered. |
 | `IN_FLIGHT` | `tier_unreachable` | `RETRY` | Start backoff timer [§16.1: base 30 s, exp, cap 1 h, jittered]. |
 | `IN_FLIGHT` | `deadline_exceeded` | `EXPIRED` | Notify user. |
-| `RETRY` | `retry_timer_fires` | `IN_FLIGHT` | Re-dispatch the same `SEALED` object (no re-sealing needed; `id` is stable, §2.2). |
+| `RETRY` (`fast`) | `retry_timer_fires` | `IN_FLIGHT` | Re-dispatch the same `SEALED` object (no re-sealing; `id` is stable, §2.2). Sound **only** for `fast`: a direct/mesh resend carries no per-hop mix tag, so an identical resend is just a retransmission. |
+| `RETRY` (`private`) | `retry_timer_fires` | `SEALED` | **MUST re-onion-wrap before re-dispatch.** Re-run the sealing step: build **fresh** mixnet paths (§4.4.3), a **fresh `α`** and **current-epoch** mix keys (§4.4.4), keeping the **stable envelope `id`** (§2.2). Re-sending the *identical* Sphinx bytes is **forbidden** for `private`: every honest first hop drops the copy as a per-hop-tag replay (`ERR_MIX_REPLAY_DETECTED`, `0x030E`, §4.4.6), so an unmodified `private` resend can **never** deliver under any packet loss until `EXPIRED`. Re-onion-wrapping produces distinct per-hop tags, so the retry is a genuine fresh delivery attempt. |
 | `RETRY` | `ack_received` | `ACKED` | A duplicate in-flight copy was delivered before the retry fired; cancel timer. |
 | `RETRY` | `deadline_exceeded` | `EXPIRED` | Notify user. |
 | `ACKED` | `ack_received` | `ACKED` | No-op (idempotent; further acks for the same `id` are ignored). |
@@ -104,7 +105,8 @@ stateDiagram-v2
   IN_FLIGHT --> ACKED : ack_received
   IN_FLIGHT --> RETRY : tier_unreachable
   IN_FLIGHT --> EXPIRED : deadline_exceeded
-  RETRY --> IN_FLIGHT : retry_timer_fires
+  RETRY --> IN_FLIGHT : retry_timer_fires (fast: same bytes)
+  RETRY --> SEALED : retry_timer_fires (private: MUST re-onion-wrap, §4.4.6)
   EXPIRED --> EXPIRED : late_ack (ignored, [fill])
   ACKED --> [*]
 ```

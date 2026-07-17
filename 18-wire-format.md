@@ -203,7 +203,7 @@ Envelope = {
 
 | Field | Key | Type | Presence | Meaning & constraints |
 |-------|----:|------|----------|-----------------------|
-| `v` | 1 | `u8` | MUST | Format version. MUST equal `0` in v0; a decoder MUST reject any other value (fail closed, §10.1). |
+| `v` | 1 | `u8` | MUST | Format version. MUST equal `0` in v0; a decoder MUST reject any other value (fail closed, §10.1, `0x0201`). **The top-level `v` is FROZEN by design (normative):** it is deliberately the **one** axis with **no** additive/dual-stack evolution path. *All* forward evolution of DMTAP routes through the versioned **sub-registries** — algorithm suites (§21.15), message kinds (§21.16), `Headers.ext` keys (§21.20), capability tokens (§21.22), DNS parameters (§21.21), and the rest — each carrying its own IANA range and dual-stack migration (§21.25). `v` exists solely as a **fail-closed tripwire**: it lets a wholly-incompatible successor wire format, should one ever be needed, be **rejected cleanly** rather than mis-parsed. A conformant v0 node MUST NOT attempt to negotiate, dual-stack, or best-effort-parse a non-zero `v`; there is intentionally no `v=` capability advertisement. (This is the honest reading: DMTAP evolves through sub-registries, not through the top-level version byte. See §21.25 item 8.) |
 | `suite` | 2 | `suite` | MUST | Algorithm suite actually used for this MOTE (§18.1.4). Governs `sender_sig` length and the crypto inside `ciphertext`. MUST be a suite both parties support (§1.3); unknown ⇒ reject. |
 | `id` | 3 | `hash` | MUST | Content address of the exact bytes of field 10 (`ciphertext`), computed per §18.9.4. A verifier MUST recompute it and drop the MOTE on mismatch (§2.7 step 2) *before* any decryption. |
 | `to` | 4 | `DeliveryTag` | MUST | Routing target: recipient key, group id, or blinded tag (§18.3.2). If it does not resolve to this node/group, the MOTE is dropped (§2.7 step 4). |
@@ -774,7 +774,8 @@ KeyRotation = {
   4 => tstr,            ; reason   free-text reason (e.g. "compromise", "pq-migration")
   5 => ts,
   ? 6 => hash,          ; prev
-  7 => sig-val,         ; sig      by OLD_IK over (old_ik, new_ik, reason, ts)
+  7 => sig-val,         ; sig            by OLD_IK over (old_ik, new_ik, reason, ts)
+  ? 8 => sig-val,       ; rotate_quorum  OPTIONAL rotate_threshold co-signature (§1.5 path (a))
 }
 ```
 
@@ -787,6 +788,7 @@ KeyRotation = {
 | `ts` | 5 | `ts` | MUST | Timestamp. |
 | `prev` | 6 | `hash` | OPTIONAL | Hash chaining into identity history. |
 | `sig` | 7 | `sig-val` | MUST | Signature by **`old_ik`** over the body (§18.9.3), proving continuity. |
+| `rotate_quorum` | 8 | `sig-val` | OPTIONAL | A **`rotate_threshold` quorum co-signature** over the body (`det_cbor(KeyRotation ∖ {7,8})`, verified under the recovery group per §1.4), authorizing the rotation under §1.5 **path (a)** (immediate effect). **When the identity has a published `RecoveryPolicy`, a `KeyRotation` MUST carry a valid `rotate_quorum` OR be published to KT and take effect only after the §16.8 veto/delay window (path (b))** — an `old_ik`-alone rotation satisfying neither is rejected/held (`ERR_KEYROTATION_UNAUTHORIZED`, `0x0121`, §1.5, §21.3). Absent for an identity with no published `RecoveryPolicy`, where `old_ik` alone suffices. |
 
 ### 18.4.6 `MoveRecord` (§1.6)
 
@@ -1671,7 +1673,12 @@ proof observed on the wire could be re-attached to a forged envelope under a new
 ### 18.9.2 `Payload.sig`
 
 ```
-payload_hash = BLAKE3-256( det_cbor(Payload ∖ {2}) )          ; 32 bytes, no prefix
+payload_hash = BLAKE3-256(
+                 det_cbor(Payload ∖ {2})
+               ‖ u8(kind)                    ; Envelope field 7, 1 byte big-endian
+               ‖ u64be(ts)                   ; Envelope field 6, 8 bytes big-endian
+               ‖ det_cbor(to)                ; Envelope field 4, the DeliveryTag map
+               )                             ; 32 bytes, no prefix
 preimage     = "DMTAP-v0/payload" ‖ 0x00 ‖ payload_hash
 Payload.sig  = Sign(sk_from, preimage)                         ; sk_from = IK or device key
 ```
@@ -1679,6 +1686,20 @@ Payload.sig  = Sign(sk_from, preimage)                         ; sk_from = IK or
 `from` (key 1) is included in the hashed body, binding the signature to the claimed sender. A
 device-key signature is valid only if that device key is authorized by a current `DeviceCert`
 under `from`'s `Identity` (§1.2). Verified at §2.7 step 8.
+
+**Envelope-context binding (normative — envelope `kind`/`ts`/`to` under the *identity* signature).**
+The `Envelope`'s `kind`, `ts`, and `to` are authenticated on the wire only by the **ephemeral,
+anyone-can-mint** `sender_sig` (§18.9.1); for a **known contact** the abuse gate is skipped and no
+challenge binds them, so an attacker who can re-emit the (already-sealed) `ciphertext` could
+**re-mint** `sender_sig` under a **new** ephemeral key over an **altered** `kind`/`ts`/`to` — rewriting
+the displayed timestamp and causal order, or relabeling `kind` (e.g. chat↔mail to change tier/render,
+or → `0x0b` to force a Double-Ratchet decrypt-fail and thus **silently suppress** the message). The
+deniable path already binds `kind` inside the ratchet AD (§18.9.10); this rule closes the same gap for
+the **non-deniable** path by folding those three envelope fields into the **`Payload.sig` preimage**
+(the identity signature the ephemeral key cannot forge). At **§2.7 step 8** the recipient MUST
+recompute `payload_hash` **using the values in the received `Envelope`** and reject any MOTE whose
+envelope `kind`/`ts`/`to` do not equal the signed context (**`ERR_ENVELOPE_CONTEXT_MISMATCH`**,
+`0x0211`, §21.4) — an envelope field was altered after the payload was signed.
 
 ### 18.9.3 Identity-family objects
 

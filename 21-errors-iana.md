@@ -114,7 +114,8 @@ fixed here once so the tables can cite them tersely without re-explaining each t
 | `0x011D` | `ERR_ALIAS_REVOKED` | Revoked-alias use check (§3.9.4, §3.11.3, §3.11.5) | An alias used to address the identity has been **revoked** (dropped in a newer signed `Identity` version and its `name → ik` DNS + KT binding retired), while the key and the identity's other aliases remain valid. Independently-revocable aliases: revoking one MUST NOT be usable off a stale cache. | No (this alias) | REJECT_NOTIFY — tell the sender to use a live alias or the key-name (§3.9.1); the key and other aliases are unaffected |
 | `0x011E` | `ERR_NAMECHAIN_BINDING_UNVERIFIED` | Name-chain bidirectional binding check (§3.12.5(b)) | A crypto name-chain (`.eth`/`.sol`, resolver-type `name-chain`, §21.18) resolution whose two binding directions **disagree**: the on-chain `name → ik` record names a key that does not claim the name in its signed `Identity.names`, or a claimed name whose chain record resolves to a different key. The chain is a discovery pointer KT audits (§3.3–3.5), never a trust root. | No | FAIL_CLOSED_BLOCK — render the name **unverified**; MUST NOT display it as authenticated nor use it to address mail |
 | `0x011F` | `ERR_RESOLVER_TYPE_UNSUPPORTED` | Resolver-type recognition (§3.12.2) | A name in a resolver type (§21.18) the verifier does not implement, or that is unregistered — the "unknown ⇒ reject, never guess" discipline (as for an unknown suite §1.1 or transport substrate §4.1). The name is unresolvable; the identity is unaffected (its other resolvers and the key-name §3.9.6 still resolve it). | No | FAIL_CLOSED_BLOCK — treat the name as unresolvable; MUST NOT guess a binding |
-| `0x0120` | `ERR_RESOLVER_DISAGREEMENT` | Multi-resolver cross-check (§3.12.3) | Two independent resolvers return **different** `ik` for the **same** name (e.g. a `dns` `_dmtap` pointer and a `name-chain` record the owner also publishes disagree). Since a genuine identity has exactly one key, the disagreement is treated as a potential attack, never silently reconciled to one key. Distinct from `0x011E` (`ERR_NAMECHAIN_BINDING_UNVERIFIED`, the *bidirectional* key↔name mismatch **within one** name-chain resolution): `0x0120` is *inter-resolver* disagreement **across** resolver types (§3.12.3), strengthening the anti-equivocation posture of §3.5. | No | HALT_ALERT — MUST NOT pin; raise a security alert and fall back to KT-quorum (§3.5.2(b)) or out-of-band verification (§3.4.1) to decide the true key |
+| `0x0120` | `ERR_RESOLVER_DISAGREEMENT` | Multi-resolver cross-check (§3.12.3) | Two independent resolvers, **each having passed step 2 (KT / bidirectional verification, §3.12.1)**, return **different** `ik` for the **same** name (e.g. a `dns` `_dmtap` pointer and a `name-chain` record the owner also publishes disagree). Since a genuine identity has exactly one key, the disagreement is treated as a potential attack, never silently reconciled to one key. A pointer that **fails** its own step 2 is discarded as unresolved (its own code, e.g. `0x011E`/`0x0114`/`0x0111`) and is **not** counted as a disagreeing peer, so one bogus published record cannot force a halt (§3.12.3). Distinct from `0x011E` (`ERR_NAMECHAIN_BINDING_UNVERIFIED`, the *bidirectional* key↔name mismatch **within one** name-chain resolution): `0x0120` is *inter-resolver* disagreement **across** resolver types (§3.12.3), strengthening the anti-equivocation posture of §3.5. | No | HALT_ALERT — MUST NOT pin; raise a security alert and fall back to KT-quorum (§3.5.2(b)) or out-of-band verification (§3.4.1) to decide the true key |
+| `0x0121` | `ERR_KEYROTATION_UNAUTHORIZED` | `KeyRotation` authorization check (§1.5, §18.4.5) | A `KeyRotation` for an identity that has a published `RecoveryPolicy` (§1.4) is signed by `old_ik` **alone** — it carries **neither** a valid `rotate_threshold` co-signature (`rotate_quorum`, path (a)) **nor** has it been published to KT and passed its §16.8 veto/delay window (path (b)). Installing a new authoritative `IK` is at least as powerful as a recovery-weakening change (§1.4 rule 3), so `old_ik` alone MUST NOT effect it: this closes the stolen-`IK` un-vetoable eviction and the `recover_threshold`-only-reconstruct-then-rotate takeover. In fork resolution a `rotate_threshold`-backed branch is preferred over an `old_ik`-alone branch (§1.5). | Conditional (a quorum-backed re-issue, or the same rotation once its published veto window elapses un-aborted, is accepted) | FAIL_CLOSED_BLOCK — reject or hold; MUST NOT advance the pin to `new_ik`; HALT_ALERT if it competes with a quorum-backed branch at the same chain position (via `0x0104`) |
 
 ## 21.4 Delivery & Validation — the MOTE object (`0x02xx`)
 
@@ -139,6 +140,7 @@ Codes are listed in the same order as the steps they correspond to.
 | `0x020E` | `STATUS_DUPLICATE_ID` | §2.6 (deduplication) | Recipient already holds `id`. | N/A | ACK_DEDUP |
 | `0x020F` | `ERR_SUITE_DOWNGRADE` | §2.7 step 8, §1.3 (suite ratchet) | `Envelope.suite` is **below** the sender-contact's pinned suite high-water-mark — a downgrade attempt (e.g. a broken classical suite offered after both parties migrated to PQ). | No | DEFER_REQUESTS + USER_WARN — route to requests with a security warning; MUST NOT accept the downgraded MOTE, MUST NOT ratchet the high-water-mark down |
 | `0x0210` | `ERR_HYBRID_SUITE_INCOMPLETE` | §1.3 (hybrid composition), §16.7 | A hybrid-suite object (`0x02`) presented to a verifier that **supports** the hybrid suite validates on only **one** component (e.g. Ed25519 passes but the ML-DSA-65 component is absent/fails) — an intra-suite strip of the PQ half. A hybrid verifier MUST require **all** component signatures (AND-composition) and the X-Wing IND-CCA KEM combiner; single-component acceptance is for a genuinely legacy (single-component) verifier only, at that component's lower assurance. | No | FAIL_CLOSED_BLOCK — reject the incomplete/downgraded hybrid; MUST NOT accept it on the classical half |
+| `0x0211` | `ERR_ENVELOPE_CONTEXT_MISMATCH` | §2.7 step 8, §18.9.2 | The `Envelope`'s `kind`/`ts`/`to` do not equal the values **bound into `Payload.sig`** (which now covers them, §18.9.2). Because bare `sender_sig` (§18.9.1) is minted by an anyone-can-mint ephemeral key, a re-emitter of the sealed `ciphertext` could otherwise re-mint it over an altered `kind`/`ts`/`to` — rewriting displayed timestamp/causal order, or relabeling `kind` (chat↔mail render/tier change, or → `0x0b` to force a silent decrypt-fail). The identity signature now binds them, so a post-signing envelope edit is detected here. | No | DROP_SILENT — an altered-context MOTE reveals nothing to notify; the untampered original still delivers on the sender's own retry (§20.1) |
 
 **Content-addressed dedup as replay defense.** §2.6/`0x020E`'s dedup-by-`id` is what makes a bare
 resend of a previously-processed MOTE a non-event rather than a distinct "replay" failure mode
@@ -195,6 +197,7 @@ to a MOTE) is a distinct concept scoped to the Auth ceremony; see `0x0502` (§21
 | `0x0411` | `ERR_CLUSTER_RECON_SUMMARY_INVALID` | Range-based reconciliation summary check (§5.6.3(a), §18.6.3) | A `ClusterSyncFrame` `recon` summary is malformed, or a `RangeFingerprint.fp` does not recompute over the ids the receiver holds in the claimed `[lo, hi)` range — a peer serving forged Merkle fingerprints to suppress or misrepresent objects. | Yes (re-drive against another peer) | FAIL_CLOSED_BLOCK — MUST NOT trust the summary; reconcile against a different cluster member |
 | `0x0412` | `ERR_CLUSTER_JOURNAL_CHAIN_BROKEN` | Journal-replay backfill chain check (§5.6.3(b), §18.6.3) | A per-account append-only journal presented for replay has a `prev` chain that does not verify — a fork or rewrite of the owner's **own** hash-chained log (the cluster analogue of a committer fork, `0x0404`, and KT append-only violation, `0x0110`). | No | HALT_ALERT — stop replaying the forked journal, alert the owner; fall back to range reconciliation (§5.6.3(a)) on the honest peers |
 | `0x0413` | `ERR_CLUSTER_CRDT_OP_INVALID` | Cluster CRDT op validation (§5.6.4, §18.6.3) | A `ClusterOp` is malformed — unknown `kind`, an OR-Set remove citing an unknown add-tag, or an HLC whose `wall` is more than the clock-skew bound (§16.10) ahead of the receiver (a "win-forever" clock) — or it embeds a `DeniablePayload`/its plaintext (forbidden in the cluster CRDT, §5.2.1). | No | FAIL_CLOSED_BLOCK — reject the op; MUST NOT apply it to the CRDT state |
+| `0x0414` | `ERR_MLS_CIPHERSUITE_DOWNGRADE` | MLS ciphersuite selection — Welcome / GroupInfo / Commit intake (§5.1) | A group handshake selects an MLS ciphersuite **below the group's MLS-ciphersuite high-water-mark**, or keeps/moves the group to a **classical** MLS ciphersuite when **every** current member advertises a PQ identity suite and a supported PQ MLS ciphersuite — a silent message-confidentiality PQ downgrade (harvest-now-decrypt-later), the MLS-ciphersuite analogue of `Envelope.suite` downgrade `0x020F`. Message-PQ rides the MLS ciphersuite (a separate u16), not `Envelope.suite`, so it is policed on its own axis (§5.1). | No | FAIL_CLOSED_BLOCK — reject the downgrading handshake; the high-water-mark ratchets up only, via a member-agreed retirement Commit, never an inbound handshake |
 
 ## 21.7 Auth errors — DMTAP-Auth (`0x05xx`)
 
@@ -291,7 +294,7 @@ loss window is disclosed and irreducible; here it is fully closed by never `250`
 | `0x0801` | `ERR_MANIFEST_HASH_MISMATCH` | Manifest integrity check (§5.5) | `Manifest.id` does not match the recomputed BLAKE3 Merkle root over `chunks`. | No | DROP_SILENT — do not begin fetch |
 | `0x0802` | `ERR_CHUNK_HASH_MISMATCH` | Per-chunk integrity check (§5.5) | A fetched chunk fails to verify against its listed hash. | Yes (re-fetch from a different swarm holder) | ROTATE_RETRY |
 | `0x0803` | `ERR_CHUNK_UNAVAILABLE` | Swarm fetch (§5.5.3 repair; §5.5.1 tiers) | No current holder serves a required chunk. Whole-file unavailability is `0x0809`. | Yes (best-effort tier) | ROTATE_RETRY; REJECT_NOTIFY once retry budget is exhausted |
-| `0x0804` | `ERR_SIZE_TIER_MISMATCH` | Size-tier classification (§2.5, §6.5) | The declared/observed size does not match the tier (inline/normal/large) the MOTE was routed under. | No | DROP_SILENT / DENY_POLICY — MUST NOT silently downgrade the privacy tier to compensate |
+| `0x0804` | `ERR_SIZE_TIER_MISMATCH` | Size-tier classification (§2.5, §6.5) | The declared/observed size does not match the tier (inline/normal/large) the MOTE was routed under. | No | DENY_POLICY — refuse the mis-tiered MOTE; MUST NOT silently downgrade the privacy tier to compensate. (A single action per the §21.2/§21.26 invariant; DENY_POLICY, not DROP_SILENT, because a size/tier disagreement is a policy reject with no metadata-privacy reason to hide it from the sender.) |
 | `0x0805` | `ERR_FILE_KEY_MISSING_OR_REVOKED` | Post-removal file access (§6.7) | A former group member's file key has been rotated out after removal from a shared folder. | No | DENY_POLICY — the member must be re-added and re-shared |
 | `0x0806` | `ERR_STORAGE_QUOTA_EXCEEDED` | Operator storage `Policy` (§12.2) | Hosted-operator storage cap reached. Self-host default is unlimited. | Yes | DENY_POLICY |
 | `0x0807` | `ERR_ATTACHMENT_KEY_INVALID` | Attachment/chunk decryption (§2.5) | The per-file content `key` fails to decrypt the referenced inline blob or chunk. | No | DROP_SILENT |
@@ -305,12 +308,19 @@ loss window is disclosed and irreducible; here it is fully closed by never `250`
 ## 21.12 Traceability matrix
 
 Every condition explicitly named in this appendix's brief maps to a code as follows, for
-auditability:
+auditability. **This matrix is the canonical MUST→code linkage (normative):** many codes are
+defined here in §21 and cited at their point of detection in §§1–17, but where a normative
+condition elsewhere does not name its code inline, **this table is the authoritative cross-index**
+between the condition and its `0xSSNN` code, and the conformance suite (§10.3) references it as the
+condition↔code index. A registered code is therefore never orphaned: it is reachable either from
+its defining clause or from this matrix.
 
 | Named condition | Code(s) |
 |---|---|
 | Unknown version/suite (fail-closed) | `0x0201`, `0x0101` |
 | Suite downgrade / hybrid strip | `0x020F` (below high-water-mark), `0x0210` (intra-suite hybrid strip) |
+| MLS ciphersuite downgrade (message-PQ, policed separately from `Envelope.suite`) | `0x0414` |
+| Envelope `kind`/`ts`/`to` altered after payload signed | `0x0211` |
 | Bad content-address | `0x0202` |
 | Bad `sender_sig` | `0x0203` |
 | Decrypt-failure | `0x0207` |
@@ -322,6 +332,7 @@ auditability:
 | KT-v1-log-quorum-unmet | `0x0111` |
 | KT-v1-STH-stale (freeze attack) | `0x0112` |
 | Chain-broken | `0x0104` |
+| Key rotation unauthorized (stolen-`IK` / `recover_threshold`-only takeover defense) | `0x0121` |
 | Stale/rollback record | `0x0105` (identity), `0x0302` (location record) |
 | Org-directory not authority-signed | `0x0113` |
 | Directory entry fails forward-verify | `0x0114` |
@@ -406,7 +417,7 @@ extension procedure in §21.25. Allocation policies use the standard terms of RF
 | **Registry name** | DMTAP Error/Status Codes |
 | **Reference** | §21.1–§21.11 (this document) |
 | **Allocation policy** | New subsystem byte (`0x09`–`0xEF`): Standards Action. New code point within an existing subsystem (`NN` = `0x01`–`0x7F`): Specification Required. `NN` = `0x80`–`0xFE` within any subsystem: Private Use (implementation-local diagnostics; MUST map to the nearest standard code's Responder Action, §21.2, for any behavior visible to another implementation). `SS`/`NN` = `0x00` or `0xFF`: Reserved. |
-| **Initial contents** | The 134 codes enumerated in §21.3–§21.11. |
+| **Initial contents** | The 137 codes enumerated in §21.3–§21.11. |
 | **Registry discipline** | Append-only. A retired code MUST be marked Deprecated, never deleted or reassigned to a different meaning (mirroring the append-only philosophy of the KT log, §3.5). |
 
 ## 21.15 Algorithm Suites Registry (`suite` u8)
@@ -416,8 +427,8 @@ extension procedure in §21.25. Allocation policies use the standard terms of RF
 | **Registry name** | DMTAP Algorithm Suites |
 | **Reference** | §1.1, §16.7 |
 | **Allocation policy** | `0x01`–`0x1F`: Standards Action (a suite changes the network's core interoperability and security floor — every conforming node must be able to reject or accept it correctly). `0x20`–`0xDF`: Specification Required. `0xE0`–`0xFE`: Private Use. `0x00`, `0xFF`: Reserved. |
-| **Initial contents** | `0x01` (Ed25519 / X25519-HPKE / ChaCha20-Poly1305 / BLAKE3-256, v0 REQUIRED); `0x02` (Ed25519+ML-DSA-65 / X-Wing hybrid / ChaCha20-Poly1305 / BLAKE3-256, PQ target). |
-| **Registration requirements** | A new suite registration MUST specify: signature scheme, KEM/PKE, AEAD, hash function, and a security analysis of the combination; MUST state its MLS-ciphersuite mapping if it is to be usable for group messaging (§5.1); MUST NOT be accepted by any conformant node until published here (unknown suites are rejected fail-closed, §1.1, §10.1 — there is no silent negotiation fallback beyond the documented suite-intersection rule, §1.3). |
+| **Initial contents** | `0x01` (Ed25519 / X25519-HPKE / ChaCha20-Poly1305 / BLAKE3-256, v0 REQUIRED); `0x02` (Ed25519+ML-DSA-65 / X-Wing hybrid / ChaCha20-Poly1305 / BLAKE3-256, RESERVED, PQ target); `0x03` (Ed25519+ML-DSA-65 / X-Wing hybrid / **AES-256-GCM** / BLAKE3-256, RESERVED, **AEAD-diverse emergency target**, §1.1). |
+| **Registration requirements** | A new suite registration MUST specify: signature scheme, KEM/PKE, AEAD, hash function, and a security analysis of the combination; MUST state its MLS-ciphersuite mapping if it is to be usable for group messaging (§5.1); MUST NOT be accepted by any conformant node until published here (unknown suites are rejected fail-closed, §1.1, §10.1 — there is no silent negotiation fallback beyond the documented suite-intersection rule, §1.3). **AEAD agility is whole-suite-granular:** a suite fixes its AEAD alongside its signature/KEM/hash, with no independent AEAD selector, so an AEAD break is answered by migrating to a suite with a different AEAD (e.g. `0x01`/`0x02` ChaCha20-Poly1305 → `0x03` AES-256-GCM) via the multi-suite mechanism (§1.3), not by swapping a primitive in place (§1.1). |
 
 ## 21.16 Message Kinds Registry (`kind` u8)
 
@@ -435,7 +446,7 @@ extension procedure in §21.25. Allocation policies use the standard terms of RF
 |---|---|
 | **Registry name** | DMTAP Anti-Abuse Challenge Types |
 | **Reference** | §9.2 (`ChallengeSpec`), §2.2b |
-| **Allocation policy** | Initial four types: assigned. Additional types: Specification Required — a new challenge type MUST specify its verification procedure (verifiable without decrypting the payload, per §2.2b), its issuer-trust model (per the §9.3.1 zero-default-budget rule, so a new type cannot bypass "cost for cold contact"), and its interaction with the §2.7a disposition (invalid/forged vs. absent/insufficient). `0x40`–`0xFE` (if a numeric tag encoding is used): Private Use. |
+| **Allocation policy** | A challenge type is identified by a **`u8` type tag** (fixed encoding, not conditional). `0x00`–`0x3F`: assigned / Specification Required — a new challenge type MUST specify its verification procedure (verifiable without decrypting the payload, per §2.2b), its issuer-trust model (per the §9.3.1 zero-default-budget rule, so a new type cannot bypass "cost for cold contact"), and its interaction with the §2.7a disposition (invalid/forged vs. absent/insufficient). `0x40`–`0xFE`: **Private Use** (unconditional). `0x00`/`0xFF` MAY be reserved by a registration; the four initial types occupy the low assigned range. |
 | **Initial contents** | `pow(bits)` (§9.4); `token(issuer)` — ARC-style anonymous rate-limited credential (§9.3); `stamp(amount)` — postage (§9.5); `vouch(guardianSet)` (§9.7). |
 
 ## 21.18 Identity Resolver Types Registry
@@ -485,7 +496,7 @@ extension procedure in §21.25. Allocation policies use the standard terms of RF
 | **Registry name** | DMTAP Capability Tokens |
 | **Reference** | §10.2, `system` MOTEs (`kind = 0x0A`) |
 | **Allocation policy** | Specification Required for tokens intended to be portable across implementations; `x-`-prefixed tokens are Private Use / FCFS, mirroring §21.20. |
-| **Initial contents** | Supported-suite tokens (§1.1); privacy-tier tokens (`private`, `fast`, §4.6); supported MLS ciphersuite tokens (§5.1); the **`deniable-1:1`** token (advertises support for the optional deniable 1:1 mode, §5.2.1 — both peers MUST advertise it before a deniable session is established); KT log-type tokens (`0x01`/`0x02`, §3.5.2, §21.19); mix-suite tokens (§4.4.12, §21.23); transport-substrate tokens (§4.1, §21.24); the **`push-wake`** token (advertises support for the OPTIONAL push wake-signaling layer of §4.9 — a device/node feature, not required for Core, negotiated device↔node); the **`cluster-sync`** token (advertises the device-cluster backfill method — range-based Merkle reconciliation and/or journal replay, §5.6.3 — negotiated device↔device within one identity's cluster); supported extension-kind/extension-header tokens (cross-referencing §21.16/§21.20 registrations); and **signed-object `≥ 64` extension-field tokens** — a peer advertises support for a reserved extension field before any sender may include it in a *signed* object (§18.1.2, §10.2). |
+| **Initial contents** | Supported-suite tokens (§1.1); privacy-tier tokens (`private`, `fast`, §4.6); supported MLS ciphersuite tokens (§5.1); the **`mls-ciphersuite-floor`** token — a group's per-group MLS-ciphersuite high-water-mark / required PQ floor (§5.1): members advertise it so a Welcome/GroupInfo/Commit selecting a ciphersuite below the floor is a downgrade (`ERR_MLS_CIPHERSUITE_DOWNGRADE`, `0x0414`), policing **message-PQ** on the MLS-ciphersuite axis independently of the `Envelope.suite` high-water-mark (§1.3); the **`deniable-1:1`** token (advertises support for the optional deniable 1:1 mode, §5.2.1 — both peers MUST advertise it before a deniable session is established); KT log-type tokens (`0x01`/`0x02`, §3.5.2, §21.19); mix-suite tokens (§4.4.12, §21.23); transport-substrate tokens (§4.1, §21.24); the **`push-wake`** token (advertises support for the OPTIONAL push wake-signaling layer of §4.9 — a device/node feature, not required for Core, negotiated device↔node); the **`cluster-sync`** token (advertises the device-cluster backfill method — range-based Merkle reconciliation and/or journal replay, §5.6.3 — negotiated device↔device within one identity's cluster); supported extension-kind/extension-header tokens (cross-referencing §21.16/§21.20 registrations); and **signed-object `≥ 64` extension-field tokens** — a peer advertises support for a reserved extension field before any sender may include it in a *signed* object (§18.1.2, §10.2). |
 | **Announcement versioning** | Capability announcements are **monotonic**: each carries a `caps_version` (`u64`) and a receiver rejects an announcement older-or-equal to the last accepted from that peer (`ERR_CAPABILITY_ANNOUNCE_ROLLBACK`, `0x030A`, §10.2), so a stale replay cannot suppress an advertised capability. |
 | **Forward-compatibility rule** | A node receiving a capability token it does not recognize MUST ignore that token (not the whole `system` MOTE) and MUST NOT assume the counterpart lacks the capability merely because the token name is unfamiliar — absence of a recognized token (in the current, highest-`caps_version` announcement) is inconclusive, not a negative assertion. |
 
@@ -508,6 +519,16 @@ extension procedure in §21.25. Allocation policies use the standard terms of RF
 | **Allocation policy** | Specification Required. A new substrate MUST specify how `peer_id` and `addrs` are interpreted and dialed under it, how it composes with the reachability ladder (§4.3) and the mixnet (§4.4), and its NAT/roaming story. `0x01`–`0xDF` Specification Required; `0xE0`–`0xFE` Private Use (closed deployments); `0x00`/`0xFF` Reserved. |
 | **Initial contents** | `0x01` — **libp2p** (v0 REQUIRED, the default; absent `substrate` field ⇒ this value): Kademlia DHT routing, circuit-relay v2, Noise/TLS, QUIC/TCP/WS/WebRTC/WebTransport, PeerId = `multihash(pubkey)`, addresses = multiaddrs (§4.1–§4.3). |
 | **Migration** | A new substrate is introduced **additively** and **capability-negotiated** (§10.2), the same dual-stack mechanism as a new algorithm suite (§21.15, §21.25 procedure): nodes advertise supported substrates, publish records under each, bridge during the transition, and retire the old substrate only once no pinned relationship needs it. A resolver treats a record on an unimplemented substrate as unreachable (`0x0303`), never a parse failure — moving off libp2p is an incremental migration, not a flag day. |
+
+## 21.24a Gateway Attestation Discriminators Registry (`GatewayAttestation.disc`)
+
+| | |
+|---|---|
+| **Registry name** | DMTAP Gateway Attestation Discriminators |
+| **Reference** | §7.2a, §18.3.11 (`GatewayAttestation.disc`, a `u8`) |
+| **Allocation policy** | **Specification Required** for portable, cross-implementation attestation kinds; **`0xE0`–`0xFE` Private Use**; `0x00`/`0xFF` Reserved. Every extensible field in DMTAP has an IANA registry; the gateway-attestation discriminator is no exception. A new attestation kind MUST specify its signature preimage (extending §18.9.11), what it attests, and how a recipient verifies it — and MUST NOT weaken the honest-provenance guarantee (an accepted message with no `provenance` was never plaintext at a gateway, §18.3.5). |
+| **Initial contents** | `1` — **legacy-inbound bridge attestation** (§7.2a): "received via gateway G at T," signed by the recipient-domain `_dmtap-gw` key. |
+| **Forward-compatibility rule** | An **unknown** `disc` value MUST be treated as an **unverifiable** attestation (`ERR_GATEWAY_ATTESTATION_INVALID`, `0x0601`, DROP_SILENT at the recipient), **never** silently ignored — an attestation whose kind a verifier cannot check is not a pass. This is the fail-closed analogue of the unknown-suite rule (§1.1), applied to provenance. |
 
 ## 21.25 Extension & versioning procedure (normative)
 
@@ -563,16 +584,26 @@ fragmenting."
    wrong and you silently corrupt application semantics), and an `ext` key is inert metadata by
    construction (guess wrong and nothing security-relevant is at stake).
 
+8. **The top-level format version `v` is FROZEN by design — the one axis that does not evolve.**
+   Unlike every mechanism above, the top-level `Envelope.v` (§18.1, §18.3.1) has **no** additive,
+   dual-stack, or capability-negotiated evolution path, and this is **intentional**, not an
+   oversight: all forward evolution routes through the versioned sub-registries (§21.15–§21.24a),
+   each with its own IANA range and dual-stack migration. `v` is a **fail-closed tripwire** — it
+   MUST equal `0` in v0, and a decoder MUST reject any other value (`0x0201`) rather than negotiate
+   or best-effort-parse it. It exists so that a hypothetical wholly-incompatible successor wire
+   format could be rejected cleanly instead of mis-parsed; there is deliberately no `v=` capability
+   advertisement and no in-band version negotiation.
+
 ## 21.26 Summary
 
-- **Error/status codes defined:** 133 (`0x0101`–`0x0120`: 32, incl. the KT-v1 detection codes
+- **Error/status codes defined:** 137 (`0x0101`–`0x0121`: 33, incl. the KT-v1 detection codes
   `0x0110`–`0x0112`, the org-administration codes `0x0113`–`0x0115` (§3.10), `0x0116`
   device-attestation and `0x0118` attestation-expired (§1.2a), `0x0117` KT leaf-hash mismatch
   (§3.5, §18.4.9), the `Profile` display-data codes `0x0119` (signature invalid), `0x011A`
   (avatar content-address mismatch) and `0x011B` (avatar URL unsafe / SSRF guard) (§3.9.5,
   §18.4.12), and the alias codes `0x011C` (self-asserted alias fails forward-verify) and `0x011D`
-  (independently-revocable alias revoked) (§3.9.4, §3.11), and the resolver codes `0x011E` (name-chain bidirectional binding unverified, §3.12.5(b)), `0x011F` (resolver-type unsupported, §3.12.2) and `0x0120` (inter-resolver disagreement, §3.12.3) (§3.12); `0x0201`–`0x0210`: 16, incl. `0x020F` suite-downgrade and `0x0210`
-  hybrid-suite-incomplete (intra-suite PQ-strip defense, §1.3);
+  (independently-revocable alias revoked) (§3.9.4, §3.11), the resolver codes `0x011E` (name-chain bidirectional binding unverified, §3.12.5(b)), `0x011F` (resolver-type unsupported, §3.12.2) and `0x0120` (inter-resolver disagreement, §3.12.3) (§3.12), and `0x0121` key-rotation-unauthorized (stolen-`IK` / `recover_threshold`-only takeover defense, §1.5); `0x0201`–`0x0211`: 17, incl. `0x020F` suite-downgrade, `0x0210`
+  hybrid-suite-incomplete (intra-suite PQ-strip defense, §1.3), and `0x0211` envelope-context-mismatch (envelope `kind`/`ts`/`to` bound into `Payload.sig`, §18.9.2);
   `0x0301`–`0x0316`: 22, incl. `0x030A` capability-announce
   rollback (§10.2), the mixnet codes `0x030B`–`0x0311` — directory/descriptor/path (`0x030B`–`0x030D`),
   replay (`0x030E`), active-attack detection (`0x030F`), no-downgrade fail-closed covering
@@ -580,11 +611,12 @@ fragmenting."
   (`0x0311`, §4.4.2) — and the OPTIONAL push wake-signaling codes `0x0312`–`0x0316` (§4.9):
   subscription-not-authenticated, WakePing-content-present, WakePing-auth-failed,
   WakePing-rate-limited (emitter + receiver), and WakePing-replay (relay-replay battery-drain);
-  `0x0401`–`0x0413`: 19, incl. the deniable-mode codes `0x040B`–`0x040F` (§5.2.1) — prekey
+  `0x0401`–`0x0414`: 20, incl. the deniable-mode codes `0x040B`–`0x040F` (§5.2.1) — prekey
   invalid/exhausted, X3DH/PQXDH failure, ratchet-MAC failure, mode-unavailable, and the
-  signature-forbidden guard — and the device-cluster sync codes `0x0410`–`0x0413` (§5.6):
+  signature-forbidden guard — the device-cluster sync codes `0x0410`–`0x0413` (§5.6):
   cluster-device-unauthorized, reconciliation-summary-invalid, journal-chain-broken (own-log fork),
-  and cluster-CRDT-op-invalid;
+  and cluster-CRDT-op-invalid — and `0x0414` MLS-ciphersuite-downgrade (message-PQ policed on the
+  MLS ciphersuite, separate from `Envelope.suite`, §5.1);
   `0x0501`–`0x050B`: 11, incl. `0x050B` capability-revoked (§13.5, §18.7.3); `0x0601`–`0x0607`: 7,
   incl. the gateway-alias codes `0x0605` (legacy→native alias unmappable) and `0x0606` (encoded
   alias non-reversible/over-length) (§7.10) and the outbound open-relay-prevention code `0x0607`
@@ -596,11 +628,13 @@ fragmenting."
   and `0x080D` file-size-tier-violation (attachment delivery-mechanism/size self-inconsistent, §5.5.1)),
   spanning the 8 requested subsystems, with every code resolving to exactly one of the 13
   defined responder actions (§21.2) — no undefined behavior remains.
-- **IANA registries defined:** **11 registries + 1 extension/versioning procedure** — the 8
+- **IANA registries defined:** **12 registries + 1 extension/versioning procedure** — the 8
   requested registries (Algorithm Suites, Message Kinds, Challenge Types, Identity Resolver Types, KT Log
   Types, `Headers.ext` Keys, DNS Parameters, Capability Tokens), the **Mix Parameters** registry
   (§21.23) and **Transport Substrates** registry (§21.24) added for the mixnet and substrate seams
-  (§4.4, §4.1), and the DMTAP Error/Status Code Registry itself (§21.14, needed to make Part 1
-  durable against future extension) = **11 registries**; plus the **extension/versioning procedure**
-  (§21.25) that governs all of them — a procedure, **not** a registry. (Earlier drafts stated "12
-  registries," conflating the §21.25 procedure with the registries; it is corrected here.)
+  (§4.4, §4.1), the **Gateway Attestation Discriminators** registry (§21.24a) added for the
+  `GatewayAttestation.disc` extension seam (§7.2a, §18.3.11), and the DMTAP Error/Status Code
+  Registry itself (§21.14, needed to make Part 1 durable against future extension) = **12
+  registries**; plus the **extension/versioning procedure** (§21.25) that governs all of them — a
+  procedure, **not** a registry. (This count includes only genuine registries; the §21.25 procedure
+  is deliberately not counted among them.)

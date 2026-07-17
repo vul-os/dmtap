@@ -494,6 +494,13 @@ An implementation or a formal model that exhibits a counterexample to any SP-*n*
 above** — without invoking its stated residual — has found a spec-level defect, and it MUST be
 filed as such (§10.4). That is the point of stating them falsifiably.
 
+**Where the formal models live.** This specification repository ships the **CDDL** wire grammars
+(§18) and the conformance vectors (§10.3); the **symbolic/ProVerif protocol models** that exercise
+the SP-*n* claims are maintained in the **reference implementation's `formal/` directory** (the
+Envoir monorepo), not in this spec repo. They are versioned against the mechanisms cited above and
+are the executable counterpart to this falsifiable-claims table; a divergence between a model and
+this text is resolved in favor of the **spec** (§10.4).
+
 ## 6.10 Measured anonymity evidence (mechanism-model simulation — supporting, not deployment proof)
 
 The §6.9 properties are stated to be **refutable**; this subsection reports what a **mixnet

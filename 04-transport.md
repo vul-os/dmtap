@@ -202,10 +202,30 @@ wire, so an observer learns only which of four buckets a message fell into, neve
 A MOTE that would exceed the top inline rung is a `normal`/`large` file (§2.5) and its bulk travels
 per §4.5, not as inline cells.
 
+**Fragment reliability for multi-cell MOTEs (normative).** A MOTE padded to a top-of-ladder bucket
+fragments into as many as **32 independently-pathed cells**, each with its own loss probability; a
+naive all-or-nothing scheme would deliver a 32-cell MOTE with probability only `(1−p)^32` and force
+a **full** re-onion-wrap (§20.1) on any single lost cell. DMTAP therefore REQUIRES **per-cell
+reliability** so a multi-cell MOTE tolerates partial loss:
+
+- The recipient maintains a **bounded partial-reassembly cache** keyed by envelope `id`, holding
+  received cells until the MOTE is complete or a **reassembly timeout** (§16.3) elapses; on timeout
+  the partial set is discarded (a bounded cache — an adversary cannot pin memory with endless
+  half-MOTEs).
+- Recovery of missing cells uses **one of** (sender's choice, capability-negotiated §10.2): **(i)
+  per-cell SURB-ARQ** — the recipient returns, over a sender-supplied Single-Use Reply Block, a
+  compact **still-missing-cell bitmap** for `id`, and the sender **re-onion-wraps and re-dispatches
+  only the missing cells** (never identical bytes, per §4.4.6); or **(ii) forward error correction**
+  — the sender ships `n > k` cells (an erasure code over the `k` payload cells) so the recipient
+  reconstructs the MOTE from **any `k`** received, needing no return channel. FEC trades bandwidth
+  for round-trips; SURB-ARQ trades round-trips for bandwidth. Either bounds delivery cost to the
+  *lost fraction*, not the whole MOTE, and neither weakens tagging-resistance (each retransmitted or
+  parity cell is an ordinary constant-length Sphinx cell).
+
 **Acks and replies.** A delivery `ack` (§2.6) travels the mixnet as its own small `system` MOTE
 (one cell); implementations MAY additionally use Sphinx **Single-Use Reply Blocks (SURBs)** so a
 recipient can reply/ack without learning the sender's location, and SURBs are the mechanism for
-recipient-side loop cover (§4.4.5).
+recipient-side loop cover (§4.4.5) and the per-cell SURB-ARQ retransmit above.
 
 ### 4.4.2 Mix directory (discovery + keys, bound to DNS/KT)
 
@@ -349,7 +369,11 @@ profiled from Sphinx/Loopix, made mandatory here.
   until that specific key expires, not until the nominal epoch ticks over. This stays bounded
   memory (two epochs at most, no permanent log). This is the primary defence against **replay-based
   correlation and (n−1) replay flooding**: an adversary cannot re-inject a target's packet to trace
-  it, because the second copy is dropped at the first honest hop.
+  it, because the second copy is dropped at the first honest hop. **Corollary for the sender's own
+  retries:** because an identical `private` packet would be dropped here as a replay, a `private`
+  MOTE that must be retried MUST be **re-onion-wrapped** (fresh paths/`α`/epoch keys, stable
+  envelope `id`) rather than re-dispatched byte-for-byte — see the delivery state machine, §20.1;
+  only the `fast` tier (no per-hop tag) may resend identical bytes.
 - **Tagging-attack resistance (MUST) — header AND payload.** Two distinct mechanisms, one per
   packet part, and both are required: **(header)** each hop verifies the per-hop **MAC `γ` over
   `β`** before any processing (§4.4.1); any adversarial bit-flip of the routing header fails the
@@ -628,6 +652,13 @@ stateDiagram-v2
 ```
 
 Durability lives entirely in this sender-side queue. The middle is stateless.
+
+**RETRY re-sealing by tier (normative).** On `RETRY → IN_FLIGHT`, a `fast` MOTE MAY re-dispatch the
+identical sealed bytes (`id` is stable, §2.2), but a `private` MOTE **MUST re-onion-wrap first** —
+rebuild fresh mixnet paths, a fresh `α`, and current-epoch mix keys (§4.4.3–§4.4.4), keeping the
+stable envelope `id`. An unmodified `private` resend would be dropped at the first honest hop as a
+per-hop-tag replay (`0x030E`, §4.4.6), so re-wrapping is what makes the default (`private`) tier
+deliverable under packet loss at all. Formalized in §20.1.
 
 ## 4.8 Local, isolated, and delay-tolerant networks
 

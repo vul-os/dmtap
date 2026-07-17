@@ -89,7 +89,7 @@ fragmentation. The suite lives in `conformance/` as three coupled artifacts:
   §18 canonical CBOR) that the cases dispatch on.
 
 39 cases are byte-runnable today (33 vector-backed + 6 self-contained canonical-CBOR reject cases);
-the remaining 82 carry an exact construction recipe and expected §21 error for the branches whose
+the remaining 85 carry an exact construction recipe and expected §21 error for the branches whose
 subsystems are not yet vectored (mixnet/MLS/gateway/auth, plus the wave-2 deniable/KT-v1/org/
 device-attestation families, the `FILE` durability guards, the `PROFILE` display-data guards, and the optional `PUSH`
 wake-signaling guards — see `conformance/README.md`). An

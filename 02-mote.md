@@ -238,8 +238,14 @@ in order:
    failure is `ERR_DENIABLE_RATCHET_AUTH_FAILED` (`0x040D`, drop/hold-for-resync), never an
    MLS/HPKE decrypt attempt.
 8. Verify `Payload.sig` under `Payload.from`; **on failure, discard silently and do not `ack`**
-   (fail closed, matching steps 1–3). Otherwise verify `from` matches the pinned identity for a
-   known contact, or TOFU-pin on first contact (§3.4). For a cold sender whose `from` is now
+   (fail closed, matching steps 1–3). The `Payload.sig` preimage **binds the envelope's `kind`,
+   `ts`, and `to`** (§18.9.2), so the recipient MUST recompute it using the received `Envelope`'s
+   `kind`/`ts`/`to` and **reject any MOTE whose envelope `kind`/`ts`/`to` differ from the signed
+   context** (`ERR_ENVELOPE_CONTEXT_MISMATCH`, `0x0211`) — this stops a re-emitter from re-minting
+   the anyone-can-mint `sender_sig` (step 3) over an altered `kind`/`ts`/`to` (rewriting timestamp/
+   causal-order, or relabeling `kind` to change rendering or force a silent decrypt-fail). Otherwise
+   verify `from` matches the pinned identity for a known contact, or TOFU-pin on first contact
+   (§3.4). For a cold sender whose `from` is now
    revealed, re-apply block/allow lists. **Deniable fork (`kind = 0x0b`):** a `DeniablePayload`
    carries **no** `sig` — the substitute authenticator is the **Double-Ratchet AEAD tag** (the
    shared-key MAC) already checked at step 7, so at this step the recipient verifies that tag

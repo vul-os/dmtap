@@ -25,7 +25,7 @@
   "referenced_vectors_count": 32,
   "vectors_count_note": "vectors_count is the number of entries in vectors/vectors.json; referenced_vectors_count (32) is how many of them the byte-backed cases currently drive (several drive more than one case). The remaining 35 are pre-generated for construction-todo families not yet wired to a case.",
   "notes": [
-    "reject cases map to spec §21 (133-code registry); error_code + error_name + disposition (Action column) are normative.",
+    "reject cases map to spec §21 (137-code registry); error_code + error_name + disposition (Action column) are normative.",
     "self-contained CBOR reject cases assert a deterministic-CBOR (RFC 8949 §4.2 / §18.1.1) decoder rejects the given bytes.",
     "construction-todo cases are non-deterministic to seal (sealed Envelope/Payload) or belong to subsystems not yet vectored (README 'Coverage vs. deferred')."
   ],

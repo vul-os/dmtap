@@ -44,6 +44,8 @@ above and for ordering hints.
 | Cover-traffic rate | Poisson, mean 30 s/msg | loop + drop + recipient-side loop; tunable per node; higher = more privacy, more bandwidth (§4.4.5) |
 | Sphinx cell size (`δ`) | 2 KiB | Sphinx constant-length payload cell after padding (§4.4.1) |
 | Payload bucket ladder | {2, 8, 32, 64} KiB = {1, 4, 16, 32} cells | a MOTE is padded up to the next rung, then fragmented into that many 2 KiB cells (§4.4.1); only ladder sizes appear on the wire |
+| Multi-cell reassembly timeout | ≤ 15 min (≈ 3× the `private`-tier delivery latency budget) | a partial multi-cell MOTE held in the bounded reassembly cache is discarded if not completed within this window (§4.4.1 fragment reliability); bounds recipient memory against half-MOTE flooding |
+| Fragment-recovery method | per-cell SURB-ARQ **or** FEC (`n > k` erasure code) | sender's choice, capability-negotiated (§10.2); recovers missing cells at the lost-fraction cost, never full re-send (§4.4.1). Retransmitted/parity cells are ordinary constant-length Sphinx cells |
 | Mix key epoch | 24 h | Sphinx mix-key rotation; advertise current+next, delete old key at `valid_until` (§4.4.4) |
 | Mix-directory freshness window | ≤ 1 mix-key epoch (24 h) | a `MixDirectory` older than this is stale (freeze-attack defense, `0x0311`); MUST be refreshed before building a `private` path, else fail closed (§4.4.2, §4.4.9). Mirrors the KT STH freshness window (§16.2) |
 | Sphinx group / `β` stream / header MAC (v0) | X25519 / ChaCha20 / Poly1305 | header DH group, `β` stream cipher, per-hop header MAC over `β` (§4.4.1); PQ variant §4.4.12 |
@@ -89,6 +91,7 @@ above; inline/push/pull governs durability, mixnet/bulk governs metadata privacy
 |-----------|---------|-------|
 | Cold-sender PoW | memory-hard (Argon2id), adaptive | last-resort tier (§9.4) |
 | PoW puzzle scope | `id ‖ recipient ‖ nonce(epoch)` | fresh epoch nonce to prevent precompute |
+| Memory-hard PoW verification budget | bounded per window **per delivering connection/relay** (e.g. ≈ a few / s / source, operator-tunable) | a recipient MUST bound how many symmetric-cost Argon2id verifications it performs; beyond budget, **defer to the requests area WITHOUT verifying** (never spend unbounded memory-hard work on unauthenticated input, never fail open) (§9.4) |
 | Unknown-issuer token budget | 0 | self-issued/unvetted → no rate budget (§9.3.1) |
 | Requests-area retention | 30 days | unproven cold MOTEs held here, not inbox (§2.7a) |
 | Postage redemption check | online (issuer) | no offline bearer acceptance (§9.5.1) |
@@ -114,7 +117,8 @@ above; inline/push/pull governs durability, mixnet/bulk governs metadata privacy
 | `suite` | Sign | KEM | AEAD | Hash | Status |
 |--------:|------|-----|------|------|--------|
 | `0x01` | Ed25519 | X25519 (HPKE) | ChaCha20-Poly1305 | BLAKE3-256 | v0 REQUIRED |
-| `0x02` | Ed25519+ML-DSA-65 | X-Wing (X25519+ML-KEM-768) | ChaCha20-Poly1305 | BLAKE3-256 | PQ target |
+| `0x02` | Ed25519+ML-DSA-65 | X-Wing (X25519+ML-KEM-768) | ChaCha20-Poly1305 | BLAKE3-256 | PQ target (RESERVED) |
+| `0x03` | Ed25519+ML-DSA-65 | X-Wing (X25519+ML-KEM-768) | AES-256-GCM | BLAKE3-256 | AEAD-diverse emergency target (RESERVED, §1.1, §21.15) |
 
 ## 16.8 Auth, sessions & group ordering
 
@@ -154,6 +158,8 @@ above; inline/push/pull governs durability, mixnet/bulk governs metadata privacy
 | Reconciliation leaf threshold | ≤ 8 ids | drill until a divergent range holds ≤ this many ids, then enumerate them directly (§5.6.3(a)) |
 | HLC wall-clock skew bound | ±120 s (= §16.1) | an HLC `wall` more than the clock-skew tolerance ahead of the receiver is rejected (`0x0413`, §5.6.4) — a device cannot "win forever" |
 | Tombstone-retention floor | 30 days | minimum a delete tombstone / superseded LWW value is retained **after** the all-member stability cut before GC (§5.6.5); tolerates a briefly-offline device (mirrors requests-area retention §16.5) |
+| Durable seen-id / tombstone horizon | ≥ max(72 h retry, 20 d offline-buffer) = **20 days** | a delivered/deleted/expired MOTE's `id` and any durable-delete (`deleted`-flag) tombstone MUST persist in the durable seen-id set at least this long, so a **late duplicate** re-arriving from a retry (§16.1) or an offline/peer buffer (§16.6) is deduplicated against a *deleted* object rather than resurrecting it (§2.6, §5.6.4, §5.6.5). The tombstone-retention floor (above) is pinned **≥** this horizon |
+| Cluster-member-liveness timeout | 7 days | a cluster member that has not advanced its `StabilityMark` within this window is **excluded from the stability cut** (and SHOULD be proposed for MLS Remove), so a dead-but-unrevoked device cannot stall tombstone GC forever (§5.6.5, mirrors the §16.8 committer-liveness principle at cluster timescale); a returning device re-syncs via backfill (§5.6.3) before it can push, so exclusion never enables resurrection |
 | Cluster gossip / stability interval | ≤ 1 h | cadence of the periodic `ClusterSyncFrame` carrying `StabilityMark`s (max-applied HLC per device) for tombstone GC (§5.6.5) |
 | Cluster journal replay batch | ≤ 1024 entries / frame | append-only journal segment size per `ClusterSyncFrame` on replay-backfill (§5.6.3(b)) |
 | `cluster-replicated` default N | 3 (= §16.4) | eager chunk replicas across the box-cluster; tolerates N−1 holder loss (§5.5.2, §5.6.6) |

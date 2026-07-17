@@ -194,6 +194,14 @@ reference code. Where the reference and the spec disagree, **the spec wins**. By
 
 A typeset PDF ([`dmtap.pdf`](dmtap.pdf)) is generated from these files.
 
+**Conformance coverage (honest status).** The [`conformance/`](conformance/) catalog has **124
+numbered cases** (SUITE.md ≡ suite.json). **39 are byte-runnable today** (33 backed by
+`vectors/vectors.json` known-answer vectors + 6 self-contained canonical-CBOR reject cases); the
+remaining **85 carry an exact construction recipe** and expected §21 error, pending vectors for
+subsystems not yet byte-pinned (mixnet / MLS / gateway / auth and the wave-2/3 families). Every
+reject case names one of the **137 codes** in the §21 registry. So the runnable ratio is **39/124
+today**, growing as each subsystem gains a fixed-input KAT.
+
 ## Building the PDF
 
 The spec is plain Markdown → HTML → PDF via headless Chrome, with **highlight.js** syntax

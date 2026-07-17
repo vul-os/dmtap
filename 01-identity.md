@@ -30,10 +30,24 @@ unknown suites (fail closed), never guess.
 |--------:|------|-----------|------|--------|
 | `0x01`  | Ed25519 | X25519 (HPKE) | ChaCha20-Poly1305 | v0 REQUIRED |
 | `0x02`  | Ed25519 + ML-DSA-65 | X25519 + ML-KEM-768 (hybrid) | ChaCha20-Poly1305 | RESERVED (PQ) |
+| `0x03`  | Ed25519 + ML-DSA-65 | X25519 + ML-KEM-768 (hybrid) | AES-256-GCM | RESERVED (AEAD-diverse emergency target) |
 
 Suite `0x02` is the post-quantum migration target. A node MAY hold keys in multiple suites
 during migration; the transparency log records which suite is current. Downgrade is
 prevented by pinning (§3) and by the transparency log's monotonic history.
+
+**AEAD agility is whole-suite-granular (normative).** A `suite` names its AEAD **together with**
+its signature, KEM, and hash — there is no independent AEAD selector, and no way to swap only the
+AEAD of an in-use suite. Both interoperable suites (`0x01`, `0x02`) share **ChaCha20-Poly1305**, so
+a break of ChaCha20 or Poly1305 would be network-wide the same day. Suite `0x03` is therefore
+**reserved in advance** as a standing emergency target: an AEAD-diverse (**AES-256-GCM**) suite
+that keeps suite `0x02`'s PQ-hybrid signature and KEM, so a network can migrate off the
+ChaCha/Poly monoculture through the ordinary multi-suite mechanism (§1.3) — advertise `0x03`, let
+senders pick up the intersection, retire the broken suite (§12.8.5) — **without a flag day**.
+Reserving the code point now, rather than allocating one under incident pressure, is what turns an
+AEAD-break response into a routine capability negotiation (§10.2) instead of an emergency
+protocol revision. Suite `0x03` is registered RESERVED in §21.15; a global kill-switch is
+deliberately *not* provided (the honest limit of §12.8.5).
 
 ## 1.2 Keys and the identity hierarchy
 
@@ -312,10 +326,16 @@ Rules:
      one per operation.
    - Prefer **SLIP-0039** for the mnemonic⊕Shamir encoding (purpose-built: two-level groups,
      checksums, passphrase) over hand-rolling BIP39 + Shamir.
-   - **Strongly consider FROST (RFC 9591)** threshold Ed25519 signatures so guardians
-     *authorize* recovery **without ever reassembling the secret key in one place** —
-     eliminating the single-point-of-compromise moment that Shamir reconstruction creates.
-     This is the preferred design when the recovery secret is a signing key.
+   - **FROST (RFC 9591) threshold Ed25519 is REQUIRED for `SocialMethod` recovery.** Guardians
+     MUST *authorize* recovery — by collectively producing a threshold signature (e.g. over a
+     `KeyRotation` to a fresh `IK`, §1.5) — **without ever reassembling the secret key in one
+     place**, eliminating the single-point-of-compromise moment that Shamir reconstruction
+     creates. A `SocialMethod` whose `recover_threshold` path can materialize a full, standalone,
+     **takeover-capable** `IK` in one location MUST NOT be used: it would let a bare
+     `recover_threshold` quorum reconstruct `IK` and then rotate (§1.5) — collapsing the rule-2
+     `rotate_threshold ≥ recover_threshold` guarantee, since reconstruction hands the quorum the
+     very key that clears the *rotation* bar. VSS (above) still governs share integrity; FROST is
+     what keeps the reconstructed authority from ever existing as a single stealable secret.
 6. **Logged & detectable.** Every version is published to the transparency log; the owner's
    other devices monitor it and MUST alert on a change they did not initiate (intrusion
    detection, §3.5).
@@ -340,8 +360,11 @@ the strongest `rotate_threshold`. Two worst cases bound it:
 
 Both are mitigated by the same discipline: multiple independent, redundant, rotatable factors so
 no single loss is fatal; the weakening-quorum + veto-window rules above so a *partial* compromise
-cannot silently escalate to takeover; and KT monitoring (§3.5) so any takeover attempt is at
-least detectable and vetoable within the window.
+cannot silently escalate to takeover; and KT monitoring (§3.5) so any takeover attempt — whether a
+recovery-**weakening** change (rule 4) or a **key rotation** that installs a new authoritative `IK`
+(§1.5) — is detectable and vetoable within the window. The veto's reach is precisely the set of
+un-vetoable takeover surfaces §1.4 and §1.5 each close; a change that satisfies neither `IK`+quorum
+nor publish-and-delay is rejected outright rather than merely watched.
 
 ### Backup & restore (content continuity)
 
@@ -369,6 +392,44 @@ To rotate `IK` (compromise, or scheduled PQ migration):
 
 A verifier MUST accept `IK'` only via a valid chain from a previously-pinned `IK`, or via an
 explicit out-of-band re-verification.
+
+**Authorization of the new authoritative key (stolen-`IK` takeover defense, normative).** A
+`KeyRotation` installs a **new authoritative key** — an act at least as powerful as a
+recovery-*weakening* change (§1.4 rule 3), and in fact stronger, since the new key can subsequently
+rewrite recovery outright. An `old_ik`-alone rotation therefore reopens exactly the takeover §1.4
+closes: (a) a stolen `IK` could rotate to a key the owner does not hold and evict the owner
+**un-vetoably**; (b) an attacker who reconstructed `IK` from a bare `recover_threshold` quorum
+could rotate immediately, defeating rule 2's `rotate_threshold ≥ recover_threshold` guarantee.
+Accordingly, **when the identity has a published `RecoveryPolicy` (§1.4)**, a `KeyRotation` MUST
+satisfy **one** of:
+
+  - **(a) Quorum-backed.** The `KeyRotation` additionally carries a **`rotate_threshold`
+    co-signature** over its body (`rotate_quorum`, §18.4.5) — the same quorum authority as a
+    reactive `RecoveryPolicy` change (§1.4). It takes effect **immediately**; or
+  - **(b) Published-and-delayed.** The `KeyRotation` is published to the transparency log (§3.5)
+    and takes effect **only after the §16 veto/delay window** (the same window as a
+    recovery-weakening change, §16.8), during which the owner's monitoring devices (§3.5) MAY
+    publish a **`rotate_threshold`-backed counter-sign that aborts** the pending rotation. The
+    asymmetric-veto rules of §1.4 rule 4 apply unchanged: a single not-yet-rotated factor cannot
+    abort, and a genuine `rotate_threshold`-backed rotation (path (a)) overrides any veto.
+
+A `KeyRotation` that satisfies **neither** — signed by `old_ik` alone, with no quorum co-signature
+and not yet past its published veto window — MUST be **rejected or held**, never applied to advance
+the pin (**`ERR_KEYROTATION_UNAUTHORIZED`**, §21.3). Nothing here impedes a legitimate owner: a
+scheduled PQ migration or routine-hygiene rotation performed by an owner in possession of `IK`
+simply follows path (a) (co-sign with the recovery quorum) or path (b) (publish and wait out the
+window) — the owner always can; only a partial-compromise attacker cannot.
+
+**No published `RecoveryPolicy` ⇒ `old_ik` alone remains sufficient.** An identity that has never
+published a `RecoveryPolicy` has no stronger authority than `IK` for a rotation to have bypassed;
+there step 2 stands unchanged. **Publishing a `RecoveryPolicy` is what raises the rotation bar** —
+consistent with §1.4, where the same act is what makes recovery-weakening quorum-gated.
+
+**Fork resolution (normative).** If two `KeyRotation` branches present at the same chain position,
+a verifier MUST **prefer the `rotate_threshold`-backed branch** (path (a), or a path (b) whose veto
+window elapsed un-aborted) over an `old_ik`-alone branch, and treat the losing branch as a takeover
+attempt — HALT_ALERT via `ERR_IDENTITY_CHAIN_BROKEN` (§21.3, §1.3). A bare `old_ik`-alone branch
+**never** wins against a quorum-backed one.
 
 ## 1.6 Identity (name) migration — never losing your address
 

@@ -62,9 +62,11 @@ survive translation, and that is correct, not a bug).
 - **Security:** Better: no third party ever evaluates rules against your plaintext. Same
   blast-radius caveat as everything else on the node: a compromised node sees what Sieve
   would have seen anyway.
-- **Open issue:** No rule language is specified in v0 (Sieve itself, RFC 5228, MAY simply be
-  reused verbatim by an implementation running on the node — nothing prevents it). Left to
-  implementations; not a protocol gap since filtering is entirely local to the node.
+- **Open issue:** **Intentional non-gap (v0-final, not deferred protocol work).** No rule language
+  is specified in v0 *by design* — filtering is entirely **local to the node**, so it needs no wire
+  interoperability. Sieve itself (RFC 5228, §15.5) MAY be reused verbatim by an implementation
+  running on the node; nothing prevents it. This is deliberately left to implementations and is
+  **not** a pending `Headers.ext`/protocol registration.
 
 #### 4. Search (on-device, no server-side index) — **Different**
 - **How:** Explicitly a non-goal to centralize (§0.7: "no server-side search"); each node
@@ -230,10 +232,11 @@ survive translation, and that is correct, not a bug).
 - **Security:** Same as legacy for the "will it actually fire" guarantee (both depend on
   *something* being up at the scheduled time); better for confidentiality (the pending message
   sits encrypted on the user's own node rather than in a provider's plaintext outbox).
-- **Open issue:** A scheduled send fired from a thin client with no always-on node (§14.3's
-  mobile-only user) needs the hosted relay-mailbox or the phone itself to be awake at send
-  time — same durability caveat as any mobile-only delivery in this model, not specific to
-  scheduling.
+- **Open issue:** **Intentional non-gap (no protocol change).** A scheduled send fired from a thin
+  client with no always-on node (§14.3's mobile-only user) needs the hosted relay-mailbox or the
+  phone itself to be awake at send time — the same durability caveat as any mobile-only delivery in
+  this model, not specific to scheduling and not a wire-format/registry item; it is a client/node
+  feature, complete for v0.
 
 #### 16. Snooze — **Clean**
 - **How:** Pure local/CRDT UI state (hide until time X, then resurface) — no wire format
@@ -334,9 +337,11 @@ survive translation, and that is correct, not a bug).
   §1.2) and revocable without rotating the whole identity — tighter blast-radius control than
   legacy delegate access, which often just grants full mailbox access. The one regression:
   the recipient cannot tell a delegate sent it, where legacy could show that distinction.
-- **Open issue:** **Gap.** No standard `Headers.ext` field is defined for "sent by delegate
-  device X of identity Y" — straightforward to add as an extension header (§10) but not yet
-  specified.
+- **Open issue:** **Dated deferral (post-v0).** No standard `Headers.ext` field is defined for
+  "sent by delegate device X of identity Y" — straightforward to add as an extension header (§10).
+  It is **registered as a Specification-Required candidate** in the `Headers.ext` registry
+  (§21.20, items 23/43), listed there for traceability and **deferred to a post-v0 revision**; it
+  is not a silent gap.
 
 #### 24. Shared mailboxes — **Clean**
 - **How:** A "team inbox" is explicitly one of the named group models (§5.8.1): a group
@@ -383,8 +388,10 @@ survive translation, and that is correct, not a bug).
   already a weak signal in legacy mail and remains exactly as weak here — not something DMTAP
   needs to strengthen, since the real anti-abuse gate (§9) is what actually matters for
   triage.
-- **Open issue:** Minor — a client convention for `ext.priority` is undefined but trivial to
-  add; low value, not worth a normative field in v0.
+- **Open issue:** **Dated deferral (post-v0).** A client convention for `ext.priority` is
+  undefined but trivial to add; low value, not worth a normative field in v0. Tracked as a
+  Specification-Required candidate in the `Headers.ext` registry (§21.20, item 27) and deferred to
+  a post-v0 revision — registered for traceability, not left as a silent gap.
 
 #### 28. Message recall (and why it's only cooperative) — **Harder** (honestly, same as legacy)
 - **How:** `kind=0x03 edit` / `kind=0x04 redact` reference a prior MOTE by `id` (§2.3) and ask

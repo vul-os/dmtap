@@ -29,6 +29,28 @@ tree, with O(log n) member changes. v0 uses ciphersuites `0x0001`
 (`draft-ietf-mls-pq-ciphersuites`, ML-KEM) and the MLS combiner
 (`draft-ietf-mls-combiner`), **not** a bolted-on external handshake.
 
+**Message confidentiality rides the MLS ciphersuite, so PQ must be gated there too (normative).**
+The suite high-water-mark of §1.3 polices `Envelope.suite` — the *identity/sealed-sender* layer —
+but a group's **message** confidentiality is a property of its **MLS ciphersuite** (a separate
+u16), not of `Envelope.suite`. A group could therefore run a **classical** MLS ciphersuite while
+every member's *identity* is already PQ (`suite = 0x02`), silently leaving message content exposed
+to harvest-now-decrypt-later even though the high-water-mark reads "PQ." DMTAP closes this gap:
+
+- **All-members-PQ ⇒ PQ MLS ciphersuite REQUIRED.** When **every** current member of a group
+  advertises a PQ identity suite (`0x02`/`0x03`) and a supported PQ MLS ciphersuite (§10.2), the
+  group MUST run a **PQ (or hybrid) MLS ciphersuite**; a Commit that would keep or move the group
+  to a classical ciphersuite under that condition MUST be rejected.
+- **Per-group MLS-ciphersuite high-water-mark.** Each member maintains, **per group**, the highest
+  MLS ciphersuite the group has used, exactly as §1.3 ratchets `Envelope.suite` per contact. A
+  Welcome, GroupInfo, or Commit that selects an MLS ciphersuite **below** that high-water-mark is a
+  downgrade attempt and MUST be rejected (**`ERR_MLS_CIPHERSUITE_DOWNGRADE`**, §21.6); the
+  high-water-mark ratchets **up** only, lowering solely via an explicit member-agreed retirement
+  Commit, never via an inbound handshake. The mark and the required floor are advertised as an
+  **MLS-ciphersuite-floor** capability token (§10.2, §21.22).
+
+In short: **message-PQ is gated by the MLS ciphersuite, not by `Envelope.suite`** — the two agility
+axes are policed independently so neither can silently mask a downgrade on the other.
+
 ### CAUTION — epoch ordering is the hard part on a mesh
 
 MLS trusts the DS for exactly one thing: **a total order on epochs** — Commits must be
@@ -67,6 +89,22 @@ node that serializes handshake messages into an append-only, hash-chained per-gr
   log makes a **fork detectable**: two Commits at the same log position with the same predecessor
   is proof of committer misbehavior; members MUST halt and alert (analogous to KT equivocation,
   §3.5) and recover per the fork-recovery path below.
+- **Commit-confirmation quorum & committer self-suspend (partition-fork defense, normative):** a
+  live but **partitioned incumbent** committer that keeps serializing Commits for a **minority** of
+  members would deterministically build a divergent log branch — healing later into a fork, group
+  HALT, and manual recovery. To bound this, a committer's Commit is **`confirmed`** only once a
+  **`> n/2` apply-ack quorum** (the same roster quorum as takeover, §16.8) of current members has
+  acknowledged applying it; an **`unconfirmed`** Commit is provisional and, if later **superseded**
+  by a quorum-confirmed Commit at the same log position, is **rolled back by its own author without
+  raising a fork** (a superseded-unconfirmed Commit is *not* the two-confirmed-Commits-at-one-
+  position condition that constitutes fork evidence). Correspondingly, a committer that cannot
+  observe **`> n/2` member heartbeats** within the committer-liveness timeout (§16.8) MUST
+  **self-suspend** — stop ordering new Commits and hold pending Proposals — so a partitioned
+  minority committer stops manufacturing a branch to reconcile. The **majority** partition proceeds
+  via the deterministic takeover (above), whose successor also needs `> n/2`; only one partition can
+  ever hold that quorum, so at most one branch is ever confirmed. (For **n = 2** the confirmation
+  quorum is both peers; a partition simply leaves each peer's Commits unconfirmed until the pair
+  reconnects, resolved by §5.1.1's rank tie-break — no fork.)
 - **Censorship is misbehavior — including *selective* censorship:** a committer can *stall* but
   cannot *forge* (every handshake is member-signed). Crucially, a committer that stays live yet
   **withholds ordering of one specific pending, member-signed proposal** (e.g. never orders a
@@ -628,32 +666,55 @@ Immutable objects need no merge; **mutable metadata** — read/unread, folder/la
 flags, moves, deletes — does. DMTAP fixes the **concrete CRDT types** so two implementations
 converge **byte-identically**:
 
-- **Object / folder / label membership** is an **Observed-Remove Set (OR-Set)** with tombstones
-  (Shapiro et al., §15.5). Each add carries a unique **add-tag** `{device_id, HLC}` (`AddTag`,
-  §18.6.3); a remove tombstones the specific add-tags it **observed**. An element is **present iff
-  it has at least one add-tag not covered by a tombstone** — so a concurrent add *wins over* a
-  remove that did not see it, and the result is order-independent.
-- **Per-field flags & moves** (read/unread, starred, the folder a message currently sits in) are a
-  **Last-Writer-Wins Register per field**, keyed by a **hybrid logical clock (HLC)** (Kulkarni et
-  al., §15.5): `HLC = {wall, counter, device_id}` (§18.6.3). The **winner of two concurrent writes
-  to one field is the one with the greater HLC, compared lexicographically as `(wall, counter,
-  device_id)`**: larger `wall` wins; ties broken by larger `counter`; any remaining tie broken by
-  the larger `device_id` bytes. This total order makes the tiebreak **deterministic on every
-  replica** — never a wall-clock coin-flip, never a lost update that two devices disagree about. An
-  HLC's `wall` MUST NOT be accepted more than the clock-skew tolerance (§16.1) ahead of the
-  receiver's clock; a far-future HLC (a device trying to "win forever") is rejected
-  (`ERR_CLUSTER_CRDT_OP_INVALID`, `0x0413`).
-- **Deletes** are OR-Set removes (tombstones), **not** destructive erasures: a delete on one device
-  and a concurrent flag-change on another converge without resurrecting or losing the object; a
-  "deleted" object is simply one whose add-tags are all tombstoned.
+- **Label membership** (the many-valued dimension — the set of labels applied to a message) is an
+  **Observed-Remove Set (OR-Set)** with tombstones (Shapiro et al., §15.5). Each add carries a
+  unique **add-tag** `{device_id, HLC}` (`AddTag`, §18.6.3); a remove tombstones the specific
+  add-tags it **observed**. A label is **present iff it has at least one add-tag not covered by a
+  tombstone** — so a concurrent re-label *wins over* a remove that did not see it, and the result is
+  order-independent. This **add-wins** bias is correct **only** for benign, many-valued labels,
+  where a spuriously-resurrected tag is harmless; **folder placement and durable deletions are
+  deliberately NOT modeled this way** (next two bullets).
+- **Per-field flags & the single current folder** are a **Last-Writer-Wins Register per field**,
+  keyed by a **hybrid logical clock (HLC)** (Kulkarni et al., §15.5): `HLC = {wall, counter,
+  device_id}` (§18.6.3). read/unread, starred, **and the one folder a message currently sits in**
+  are each **single-valued** LWW fields. A message occupies **exactly one** current folder at a
+  time; a **move** is a **single LWW write** to that one `folder` field — **not** an OR-Set
+  add/remove pair — so two concurrent moves converge on the single greater-HLC destination rather
+  than leaving the message filed in two folders at once (the divergence an OR-Set-over-folders would
+  produce). The **winner of two concurrent writes to one field is the one with the greater HLC**,
+  compared lexicographically as `(wall, counter, device_id)`: larger `wall` wins; ties broken by
+  larger `counter`; any remaining tie by the larger `device_id` bytes. This total order makes the
+  tiebreak **deterministic on every replica** — never a wall-clock coin-flip, never a lost update
+  two devices disagree about. An HLC's `wall` MUST NOT be accepted more than the clock-skew
+  tolerance (§16.1) ahead of the receiver's clock; a far-future HLC (a device trying to "win
+  forever") is rejected (`ERR_CLUSTER_CRDT_OP_INVALID`, `0x0413`).
+- **Deletes have two regimes — benign deletes add-wins, durable deletes remove-wins (normative).**
+  A **benign** delete (removing an ordinary label, un-starring) is the OR-Set remove / LWW write
+  above — **add-wins**, because an accidental resurrection is harmless. But a **durable,
+  confidentiality-bearing** deletion — a **`redact`** (§6.7), a reached **`expires`** (§2.4), or a
+  **`sensitive`**-marked removal — MUST use a **remove-wins** dimension that **dominates** the
+  OR-Set: a per-object **HLC-keyed `deleted` flag** (a 2P-Set-style "death certificate," itself an
+  LWW register over the states `{live, deleted}`). Once a `deleted` flag is observed set, **no
+  concurrent OR-Set add-tag can resurrect the object** — a concurrent benign re-label does **not**
+  un-redact a message, closing the resurrection hole where an add-wins delete would let a concurrent
+  label op revive redacted/expired/sensitive content (a correctness **and** confidentiality
+  failure). The **delete/re-add tiebreak is explicit**: because the `deleted` flag is LWW-keyed by
+  HLC, only a later **explicit un-delete** — a genuine user action writing `live` with a *greater*
+  HLC than the death certificate — can supersede it; a bare OR-Set add-tag (which never writes the
+  `deleted` field at all) has no HLC on that field and therefore **never** outranks a set death
+  certificate. A "deleted" object is thus one whose `deleted` flag is set (durable path) or whose
+  add-tags are all tombstoned (benign path), and the two never race to the object's advantage.
 
 All ops ride **inside the MLS cluster channel** (encrypted + authenticated to the cluster); each op
 names its origin `device_id`, and a receiver MUST confirm that device is a **non-revoked member**
 (§5.6.1) before applying it. A malformed op — unknown kind, an OR-Set remove citing an unknown
 add-tag, an out-of-skew HLC — or one that embeds a `DeniablePayload` or its plaintext (forbidden,
-§5.2.1) is rejected (`ERR_CLUSTER_CRDT_OP_INVALID`, `0x0413`, FAIL_CLOSED_BLOCK). Because OR-Set
-and LWW-Register are CRDTs, the merge is **associative, commutative, and idempotent** ⇒ strong
-eventual consistency with **no primary and no coordination**.
+§5.2.1) is rejected (`ERR_CLUSTER_CRDT_OP_INVALID`, `0x0413`, FAIL_CLOSED_BLOCK). Because the
+OR-Set (add-wins labels), the per-field LWW-Register (flags + single current folder), and the
+remove-wins HLC-keyed `deleted` flag (durable deletion) are all CRDTs, the merge is **associative,
+commutative, and idempotent** ⇒ strong eventual consistency with **no primary and no
+coordination**; the remove-wins `deleted` dimension dominating the add-wins OR-Set is a fixed
+convergence rule, not a coordination point.
 
 ### 5.6.5 Tombstone GC (when a delete may be reclaimed) — normative
 
@@ -666,7 +727,23 @@ briefly-offline device. Each device advertises the max HLC it has durably applie
 per-device **stability mark** in the periodic `ClusterSyncFrame` (`StabilityMark`, §18.6.3); any
 device computes the same cut from the same marks, so GC is **leaderless and deterministic**. A
 tombstone MUST NOT be GC'd before the stability cut — reclaiming it early could let a partitioned
-device's stale add resurrect a deleted object. GC is therefore safe, bounded, and coordination-free.
+device's stale add resurrect a deleted object.
+
+**Cluster-member-liveness bound (normative — so a dead device cannot stall GC forever).** As
+written, the stability cut waits on *every current member*, so a **dead-but-not-yet-revoked** device
+(still a non-revoked member per §5.6.1) would stall GC **indefinitely** — an unbounded tombstone
+store. The cut is therefore computed over **live** members only: a device that has not advanced its
+`StabilityMark` (nor otherwise been seen on the cluster channel) within the
+**cluster-member-liveness timeout (§16.10, mirroring the committer-liveness bound §16.8 at cluster
+timescale)** is treated as **stale** and **excluded from the cut**. A device excluded this way
+SHOULD additionally be proposed for MLS **Remove** from the cluster group (§5.6.1) — re-admitted by
+a fresh Welcome if it returns — so membership converges to the actually-live replica set. Exclusion
+affects **only *when* tombstones may be reclaimed**, never **whether an op is authorized** (§5.6.1
+authentication is unchanged): a returning device re-syncs via backfill (§5.6.3), pulling current
+state (including any `deleted` flags, §5.6.4) *before* it can push, so it cannot resurrect a
+GC'd deletion; and the tombstone-retention floor (§16.10) plus the durable seen-id horizon (§16.10)
+bound the window in which a stale add could matter at all. GC is therefore safe, **bounded even
+against a permanently-dead member**, and coordination-free.
 
 ### 5.6.6 Redundancy & files (cheap manifests, swarmed bytes)
 

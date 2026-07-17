@@ -7,6 +7,16 @@ reproduced here — RFCs are permanently available at `https://www.rfc-editor.or
 and W3C/OpenID/other specs at the URLs given. DMTAP cites them by identifier and profiles them;
 where DMTAP narrows or extends a referenced spec, the DMTAP text is normative for DMTAP.
 
+## 15.0 Normative — specification conventions & process
+
+| Ref | Title | DMTAP use |
+|-----|-------|-----------|
+| **RFC 2119** | Key words for use in RFCs to Indicate Requirement Levels | the MUST/SHOULD/MAY vocabulary used throughout (every section) |
+| **RFC 8174** | Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words | only **uppercase** keywords carry the RFC 2119 meaning (§0, §21.1) |
+| **RFC 8610** | Concise Data Definition Language (CDDL) | the schema notation of every wire grammar in §18 |
+| **RFC 8126 (BCP 26)** | Guidelines for Writing an IANA Considerations Section | the allocation-policy vocabulary (Standards Action / Specification Required / FCFS / Private Use) of §21.13, §21.25 |
+| **RFC 3463** | Enhanced Mail System Status Codes | the enhanced status codes in the gateway inbound SMTP mapping (§21.9) |
+
 ## 15.1 Normative — cryptography & encoding
 
 | Ref | Title | DMTAP use |
@@ -108,6 +118,14 @@ where DMTAP narrows or extends a referenced spec, the DMTAP text is normative fo
 | **Auvolat & Taïani** (DAIS 2019) | Merkle Search Trees: efficient state-based CRDTs in open networks | prior art for the range-based Merkle summary used in device-cluster backfill (§5.6.3) |
 | **Meyer** (2023) | Range-Based Set Reconciliation | the drill-divergent-ranges / skip-matching-subtrees reconciliation exchange (§5.6.3) |
 | **Minsky & Trachtenberg** (CPISync; IEEE Trans. Inf. Theory 2003) | efficient set reconciliation | precedent for reconciling two sets by their differences, not full transfer (§5.6.3) |
+| **RFC 9052** | CBOR Object Signing and Encryption (COSE) | the integer-keyed-map convention DMTAP objects follow (§18.1.2) |
+| **RFC 8392** | CBOR Web Token (CWT) | integer-keyed claims precedent for the map keying (§18.1.2) |
+| **RFC 7800** | Proof-of-Possession Key Semantics for JWTs | the `cnf` confirmation-key pattern in the auth assertion (§13.3, §18.9.8) |
+| **RFC 5546** | iCalendar Transport-Independent Interoperability Protocol (iTIP) | calendar scheduling/invitation semantics behind the calendar object flows (§8.4) |
+| **RFC 5228** | Sieve: An Email Filtering Language | the node-local filtering-rule precedent an implementation MAY reuse verbatim (§17, feature-parity item 3) |
+| **RFC 7929** | DANE bindings for OpenPGP (DNS-published keys) | precedent for DNS-published key material, informing the `_dmtap` record design (§3.2) |
+| **RFC 1918** | Address Allocation for Private Internets | the private-IPv4 range in the avatar-URL SSRF guard (§3.9.5, `0x011B`) |
+| **RFC 4193** | Unique Local IPv6 Unicast Addresses | the ULA range in the avatar-URL SSRF guard (§3.9.5, `0x011B`) |
 
 ## 15.6 On reproduction
 

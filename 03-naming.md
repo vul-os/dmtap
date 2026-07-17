@@ -878,9 +878,22 @@ Since a genuine identity has exactly one key, **independent resolvers MUST agree
 `ik`.** Disagreement — two resolvers returning **different keys** for the same name — is **surfaced
 as a potential attack**, never silently reconciled to one: the client MUST NOT pin, MUST raise a
 security alert, and MUST fall back to KT-quorum (§3.5.2(b)) or out-of-band verification (§3.4.1) to
-decide the true key (`ERR_RESOLVER_DISAGREEMENT`, `0x0120`, HALT_ALERT). This strengthens the
-anti-equivocation posture of §3.5: an attacker must now corrupt **every** resolver *and* the KT
-quorum consistently, not just one registrar or one chain.
+decide the true key (`ERR_RESOLVER_DISAGREEMENT`, `0x0120`, HALT_ALERT).
+
+**The cross-check runs only over *step-2-verified* pointers (normative — no bogus-record DoS).**
+The agreement test applies **exclusively** to pointers that each **independently passed step 2**
+(§3.12.1: KT verification per §3.5, and — for a name-chain — bidirectional binding per §3.12.5(b)).
+A pointer that **fails its own step 2** is **discarded as unresolved** under its own error
+(`ERR_NAMECHAIN_BINDING_UNVERIFIED` `0x011E`, `ERR_DIRECTORY_ENTRY_UNVERIFIED` `0x0114`,
+`ERR_KT_LOG_QUORUM_UNMET` `0x0111`, etc.) — it becomes **"one fewer resolver,"** **not** a
+"disagreeing peer." Consequently `0x0120` is raised **only** when **two or more** pointers *each
+pass* step 2 yet resolve to **different** keys — a genuine equivocation across trusted channels.
+This closes the availability attack where an adversary who can publish **one** bogus record (a
+stray `.eth` entry, a poisoned directory row) would otherwise make a victim's name
+`HALT_ALERT`-halt everywhere: the bogus pointer never clears step 2, so it is dropped, and
+resolution proceeds on the surviving verified pointer(s). An attacker must still corrupt **every**
+*verified* channel *and* the KT quorum consistently — strengthening, not weakening, the
+anti-equivocation posture of §3.5.
 
 ### 3.12.4 The resolver types defined today
 
