@@ -92,6 +92,7 @@ where DMTAP narrows or extends a referenced spec, the DMTAP text is normative fo
 | **Nym** | deployed stratified mixnet | stratified topology + operational descendant of Loopix (§4.4.3) |
 | **Anonymity Trilemma** (Das et al., IEEE S&P 2018) | anonymity ↔ latency/bandwidth | the fundamental privacy bound; the high-security-profile lever (§6.6, §4.4.10) |
 | **CONIKS** (USENIX Sec 2015) / **RFC 6962** | key transparency / Certificate Transparency | auditable `name→key` (§3.5) |
+| **Zooko's Triangle** (Wilcox-O'Hearn, 2001) / **Petname Systems** (Stiegler, 2005) | the naming trilemma — a name can be at most two of *human-meaningful*, *globally-unique*, *authority-free* — and the petname resolution of it | the naming-ladder rationale (§3.9, §3.9.3, §3.9.6, §3.12): the key-name takes the global+authority-free corner (not human-chosen), petnames the human+authority-free corner (local), and a name-chain buys the human+global corner via consensus (§3.12.5) |
 | **SLIP-0039** / **RFC 9591 (FROST)** | Shamir mnemonic / threshold signatures | recovery (§1.4) |
 | **Chatmail / Delta Chat, Matrix/Sygnal, Signal** | minimal mail server, push gateway, sealed sender | mobile push + relay-mailbox precedent (§14); sealed sender (§6) |
 | **draft-connolly-cfrg-xwing-kem** | X-Wing hybrid KEM | PQ HPKE KEM combiner (§1.1) |

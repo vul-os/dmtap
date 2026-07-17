@@ -46,6 +46,7 @@ and on `reject` MUST map it to the named §21 error code with that code's `Actio
 | **Core** — §2.7 validation pipeline (`VAL`) | 15 | 0 (2 reuse ADDR/PRE) | 0 | 15 |
 | **Core** — identity / KT / naming (`IDENT`) | 6 | 0 | 0 | 6 |
 | **Core** — aliases (`ALIAS`) | 3 | 0 | 0 | 3 |
+| **Core** — resolver framework (`RESOLVE`) | 3 | 0 | 0 | 3 |
 | **Private** (`PRIV`) | 7 | 0 | 0 | 7 |
 | **Groups & Files** (`GRP`, `FILE`) | 12 | 0 | 0 | 12 |
 | **Groups & Files** — device-cluster sync (`SYNC`) | 5 | 0 | 0 | 5 |
@@ -59,22 +60,23 @@ and on `reject` MUST map it to the named §21 error code with that code's `Actio
 | **Core** — device attestation (`ATTEST`) | 2 | 0 | 0 | 2 |
 | **Core** — profile / avatar (`PROFILE`) | 2 | 0 | 0 | 2 |
 | **Optional** — push wake-signaling (`PUSH`) | 2 | 0 | 0 | 2 |
-| **Total** | **121** | **33** | **6** | **82** |
+| **Total** | **124** | **33** | **6** | **85** |
 
 The 33 vectored + 6 self-contained cases (**39**) are fully machine-runnable **today** from
 `vectors.json` + the inline bytes here, with **no reference implementation required**. They pin the
 entire deterministic, security-critical Core spine — canonical CBOR, content addressing, the two
 MOTE signature preimages (§18.9.1/§18.9.2), Ed25519 (with RFC 8032 cross-checks), the 8-word
-key-name, safety numbers, and suite fail-closed. The 82 `construction-todo` cases give the exact
+key-name, safety numbers, and suite fail-closed. The 85 `construction-todo` cases give the exact
 recipe and expected §21 error for every remaining normative branch (the full §2.7 pipeline,
 identity/KT fail-closed, the higher levels, the wave-2 hardening families —
-`DENIABLE`/`ORG`/`KTV1`/`ATTEST` — the `PROFILE` display-data guards, and the optional `PUSH`
+`DENIABLE`/`ORG`/`KTV1`/`ATTEST` — the `PROFILE` display-data guards, the pluggable-resolver guards
+(`RESOLVE`), the optional `PUSH`
 wake-signaling guards, and the `FILE` durability guards `DMTAP-FILE-05`–`-09`); each becomes byte-backed
 when the corresponding subsystem gains a fixed-input KAT in `vectors.json` (see README "Coverage vs.
 deferred"). **Sync status:** `SUITE.md` and [`suite.json`](suite.json) are **in sync** — both carry
-the same **121** case ids (the wave-2 `DENIABLE`/`KTV1` families, the `PROFILE` cases, the
+the same **124** case ids (the wave-2 `DENIABLE`/`KTV1` families, the `PROFILE` cases, the
 optional `PUSH` cases, the `FILE` durability cases, and the wave-3 `SYNC` (device-cluster),
-`ALIAS`, and `GWALIAS` families are mirrored into `suite.json`). The changed deniable objects (§5.2.1 dedicated-`idk`) are still to be
+`ALIAS`, `GWALIAS`, and `RESOLVE` families are mirrored into `suite.json`). The changed deniable objects (§5.2.1 dedicated-`idk`) are still to be
 re-vectored when the reference regenerates `vectors.json`.
 
 > All 39 byte-backed cases correspond one-for-one to entries in `vectors.json`
@@ -147,12 +149,12 @@ crypto/encoding case below is a prerequisite the higher levels inherit.
 
 | id | req | clause | checks | input | expect | status |
 |----|-----|--------|--------|-------|--------|--------|
-| DMTAP-NAME-01 | MUST | §3.9.1, §16.2 | key-name is deterministic (+ checksum verifies) — all-zero key | vector `keyname_zero_key` | match (`name`), accept (checksum) | vectored |
-| DMTAP-NAME-02 | MUST | §3.9.1 | key-name of all-`0x01` key | vector `keyname_key_ones` | match | vectored |
-| DMTAP-NAME-03 | MUST | §3.9.1 | key-name of all-`0x02` key | vector `keyname_key_twos` | match | vectored |
-| DMTAP-NAME-04 | MUST | §3.9.1 | key-name of a real Ed25519 public key | vector `keyname_real_pubkey` | match | vectored |
-| DMTAP-NAME-05 | MUST | §3.9.1 | distinct keys ⇒ distinct names (`keyname_key_ones` ≠ `keyname_key_twos`) | derived from NAME-02 / NAME-03 | accept (names differ) | vectored |
-| DMTAP-NAME-06 | MUST | §3.9.1, §16.2 | a single mistyped word fails the folded checksum (fail closed) | vector `keyname_typo_rejected` | reject (checksum) | vectored |
+| DMTAP-NAME-01 | MUST | §3.9.6, §16.2 | key-name is deterministic (+ checksum verifies) — all-zero key | vector `keyname_zero_key` | match (`name`), accept (checksum) | vectored |
+| DMTAP-NAME-02 | MUST | §3.9.6 | key-name of all-`0x01` key | vector `keyname_key_ones` | match | vectored |
+| DMTAP-NAME-03 | MUST | §3.9.6 | key-name of all-`0x02` key | vector `keyname_key_twos` | match | vectored |
+| DMTAP-NAME-04 | MUST | §3.9.6 | key-name of a real Ed25519 public key | vector `keyname_real_pubkey` | match | vectored |
+| DMTAP-NAME-05 | MUST | §3.9.6 | distinct keys ⇒ distinct names (`keyname_key_ones` ≠ `keyname_key_twos`) | derived from NAME-02 / NAME-03 | accept (names differ) | vectored |
+| DMTAP-NAME-06 | MUST | §3.9.6, §16.2 | a single mistyped word fails the folded checksum (fail closed) | vector `keyname_typo_rejected` | reject (checksum) | vectored |
 
 ### SAFE — out-of-band safety number (§3.4.1)
 
@@ -398,6 +400,20 @@ revocable; every verified alias resolves to the same identity key.
 | DMTAP-ALIAS-01 | MUST | §3.9.4, §3.11.3 | a name in the identity's own `Identity.names` whose forward `name → ik` binding (DNS+KT) resolves to a **different** key is rendered unverified and MUST NOT be displayed as authenticated nor used to address mail | reject → `ERR_ALIAS_FORWARD_UNVERIFIED` (0x011C), FAIL_CLOSED_BLOCK | construction-todo |
 | DMTAP-ALIAS-02 | MUST | §3.9.4, §3.11.5 | a **revoked** alias (dropped in a newer signed `Identity`, its binding retired) used off a stale cache to address the identity is refused; the key and the identity's other aliases are unaffected | reject → `ERR_ALIAS_REVOKED` (0x011D), REJECT_NOTIFY | construction-todo |
 | DMTAP-ALIAS-03 | MUST | §3.9.4, §3.11.3, §18.4.9 | multiple **verified** aliases (distinct `name`, same `ik`/`identity_id`) resolve to the **same** identity — recognized as one person/one key, pinned per-key | accept (all aliases resolve to one identity_id) | construction-todo |
+
+---
+
+## Pluggable resolver framework (§3.12) — `RESOLVE`
+
+Level **Core**. Resolution is always discover-then-KT-verify (§3.12.1); a resolver never
+introduces its own trust root, unknown types fail closed (never guessed), and independent
+resolvers must agree on the one key.
+
+| id | req | clause | checks | expect | status |
+|----|-----|--------|--------|--------|--------|
+| DMTAP-RESOLVE-01 | MUST | §3.12.5(b) | a `name-chain` resolution whose two binding directions **disagree** — an on-chain `name → ik` record naming a key that does not claim the name in its signed `Identity.names`, or a claimed name whose chain record resolves to a **different** key — is rendered unverified and MUST NOT be used to address mail | reject → `ERR_NAMECHAIN_BINDING_UNVERIFIED` (0x011E), FAIL_CLOSED_BLOCK | construction-todo |
+| DMTAP-RESOLVE-02 | MUST | §3.12.2 | a name in a resolver type the verifier does not implement, or that is unregistered, is treated as unresolvable and fails closed — the "unknown ⇒ reject, never guess" discipline; the identity stays reachable via its other resolvers and the key-name (§3.9.6) | reject → `ERR_RESOLVER_TYPE_UNSUPPORTED` (0x011F), FAIL_CLOSED_BLOCK | construction-todo |
+| DMTAP-RESOLVE-03 | MUST | §3.12.3, §3.5.2(b) | two independent resolvers returning **different** `ik` for the **same** name is surfaced as a potential attack, never silently reconciled: the client MUST NOT pin, MUST alert, and MUST fall back to KT-quorum or OOB verification | reject → `ERR_RESOLVER_DISAGREEMENT` (0x0120), HALT_ALERT | construction-todo |
 
 ---
 

@@ -878,7 +878,7 @@ Since a genuine identity has exactly one key, **independent resolvers MUST agree
 `ik`.** Disagreement — two resolvers returning **different keys** for the same name — is **surfaced
 as a potential attack**, never silently reconciled to one: the client MUST NOT pin, MUST raise a
 security alert, and MUST fall back to KT-quorum (§3.5.2(b)) or out-of-band verification (§3.4.1) to
-decide the true key (`ERR_RESOLVER_DISAGREEMENT`, `0x011E`, HALT_ALERT). This strengthens the
+decide the true key (`ERR_RESOLVER_DISAGREEMENT`, `0x0120`, HALT_ALERT). This strengthens the
 anti-equivocation posture of §3.5: an attacker must now corrupt **every** resolver *and* the KT
 quorum consistently, not just one registrar or one chain.
 

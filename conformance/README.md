@@ -12,10 +12,11 @@ The suite has two coupled artifacts plus this guide:
 | [`suite.json`](suite.json) | The **machine-readable** form of those cases (mirroring their case ids; see the sync note below) — a runner in any language drives it. |
 | [`vectors/vectors.json`](vectors/vectors.json) | The **byte-exact known-answer inputs** the vectored cases dispatch on. |
 
-`SUITE.md` catalogs **121** numbered cases and `suite.json` mirrors all **121** — the two are **in
+`SUITE.md` catalogs **124** numbered cases and `suite.json` mirrors all **124** — the two are **in
 sync** (the wave-2 deniable-1:1 and KT-v1-hardening families, the `PROFILE` display-data cases, the
-optional `PUSH` wake-signaling cases, the `FILE` durability cases, and the wave-3 device-cluster
-`SYNC`, `ALIAS`, and gateway-alias `GWALIAS` families are mirrored) and MUST stay so.
+optional `PUSH` wake-signaling cases, the `FILE` durability cases, the wave-3 device-cluster
+`SYNC`, `ALIAS`, and gateway-alias `GWALIAS` families, and the pluggable-resolver `RESOLVE` family
+are mirrored) and MUST stay so.
 39 cases are byte-runnable
 today (33 backed by
 a `vectors.json` entry, 6 self-contained CBOR-reject cases whose bytes are inline); 70 are

@@ -25,7 +25,7 @@
   "referenced_vectors_count": 32,
   "vectors_count_note": "vectors_count is the number of entries in vectors/vectors.json; referenced_vectors_count (32) is how many of them the byte-backed cases currently drive (several drive more than one case). The remaining 35 are pre-generated for construction-todo families not yet wired to a case.",
   "notes": [
-    "reject cases map to spec §21 (132-code registry); error_code + error_name + disposition (Action column) are normative.",
+    "reject cases map to spec §21 (133-code registry); error_code + error_name + disposition (Action column) are normative.",
     "self-contained CBOR reject cases assert a deterministic-CBOR (RFC 8949 §4.2 / §18.1.1) decoder rejects the given bytes.",
     "construction-todo cases are non-deterministic to seal (sealed Envelope/Payload) or belong to subsystems not yet vectored (README 'Coverage vs. deferred')."
   ],
@@ -557,7 +557,7 @@
       "category": "NAME",
       "req": "MUST",
       "clause": [
-        "§3.9.1",
+        "§3.9.6",
         "§16.2"
       ],
       "checks": "deterministic 8-word key-name (+ checksum verifies), all-zero key",
@@ -575,7 +575,7 @@
       "category": "NAME",
       "req": "MUST",
       "clause": [
-        "§3.9.1"
+        "§3.9.6"
       ],
       "checks": "key-name of all-0x01 key",
       "operation": "keyname_encode",
@@ -592,7 +592,7 @@
       "category": "NAME",
       "req": "MUST",
       "clause": [
-        "§3.9.1"
+        "§3.9.6"
       ],
       "checks": "key-name of all-0x02 key",
       "operation": "keyname_encode",
@@ -609,7 +609,7 @@
       "category": "NAME",
       "req": "MUST",
       "clause": [
-        "§3.9.1"
+        "§3.9.6"
       ],
       "checks": "key-name of a real Ed25519 public key",
       "operation": "keyname_encode",
@@ -626,7 +626,7 @@
       "category": "NAME",
       "req": "MUST",
       "clause": [
-        "§3.9.1"
+        "§3.9.6"
       ],
       "checks": "distinct keys yield distinct names (keyname_key_ones != keyname_key_twos)",
       "operation": "keyname_distinct",
@@ -646,7 +646,7 @@
       "category": "NAME",
       "req": "MUST",
       "clause": [
-        "§3.9.1",
+        "§3.9.6",
         "§16.2"
       ],
       "checks": "a single mistyped word fails the folded checksum (fail closed)",
@@ -2313,6 +2313,64 @@
       "construction": "resolve three verified aliases (random/vanity/byod) that share one ik/identity_id; assert all yield the same identity",
       "expect": {
         "outcome": "accept"
+      },
+      "status": "construction-todo"
+    },
+    {
+      "id": "DMTAP-RESOLVE-01",
+      "level": "Core",
+      "category": "RESOLVE",
+      "req": "MUST",
+      "clause": [
+        "§3.12.5(b)"
+      ],
+      "checks": "a name-chain resolution whose two binding directions disagree — an on-chain name->ik record naming a key that does not claim the name in its signed Identity.names, or a claimed name whose chain record resolves to a different key — is rendered unverified and MUST NOT be used to address mail",
+      "operation": "resolver_resolve",
+      "construction": "resolve a name-chain (.eth/.sol) name where the on-chain name->ik record and the key's self-asserted Identity.names disagree; assert the binding is rejected as unverified",
+      "expect": {
+        "outcome": "reject",
+        "error_code": "0x011E",
+        "error_name": "ERR_NAMECHAIN_BINDING_UNVERIFIED",
+        "action": "FAIL_CLOSED_BLOCK"
+      },
+      "status": "construction-todo"
+    },
+    {
+      "id": "DMTAP-RESOLVE-02",
+      "level": "Core",
+      "category": "RESOLVE",
+      "req": "MUST",
+      "clause": [
+        "§3.12.2"
+      ],
+      "checks": "a name in a resolver type the verifier does not implement, or that is unregistered, is treated as unresolvable and fails closed — the unknown-implies-reject-never-guess discipline; the identity stays reachable via its other resolvers and the key-name (§3.9.6)",
+      "operation": "resolver_resolve",
+      "construction": "present a name tagged with a resolver-type the node does not implement/registered; assert it is treated as unresolvable and no binding is guessed",
+      "expect": {
+        "outcome": "reject",
+        "error_code": "0x011F",
+        "error_name": "ERR_RESOLVER_TYPE_UNSUPPORTED",
+        "action": "FAIL_CLOSED_BLOCK"
+      },
+      "status": "construction-todo"
+    },
+    {
+      "id": "DMTAP-RESOLVE-03",
+      "level": "Core",
+      "category": "RESOLVE",
+      "req": "MUST",
+      "clause": [
+        "§3.12.3",
+        "§3.5.2(b)"
+      ],
+      "checks": "two independent resolvers returning different ik for the same name is surfaced as a potential attack, never silently reconciled: the client MUST NOT pin, MUST alert, and MUST fall back to KT-quorum or OOB verification",
+      "operation": "resolver_resolve",
+      "construction": "query two resolvers (e.g. dns _dmtap pointer and a name-chain record) for one name that return different ik; assert no pin, a security alert, and fallback to KT-quorum/OOB",
+      "expect": {
+        "outcome": "reject",
+        "error_code": "0x0120",
+        "error_name": "ERR_RESOLVER_DISAGREEMENT",
+        "action": "HALT_ALERT"
       },
       "status": "construction-todo"
     },

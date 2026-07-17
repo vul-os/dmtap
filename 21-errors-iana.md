@@ -114,6 +114,7 @@ fixed here once so the tables can cite them tersely without re-explaining each t
 | `0x011D` | `ERR_ALIAS_REVOKED` | Revoked-alias use check (§3.9.4, §3.11.3, §3.11.5) | An alias used to address the identity has been **revoked** (dropped in a newer signed `Identity` version and its `name → ik` DNS + KT binding retired), while the key and the identity's other aliases remain valid. Independently-revocable aliases: revoking one MUST NOT be usable off a stale cache. | No (this alias) | REJECT_NOTIFY — tell the sender to use a live alias or the key-name (§3.9.1); the key and other aliases are unaffected |
 | `0x011E` | `ERR_NAMECHAIN_BINDING_UNVERIFIED` | Name-chain bidirectional binding check (§3.12.5(b)) | A crypto name-chain (`.eth`/`.sol`, resolver-type `name-chain`, §21.18) resolution whose two binding directions **disagree**: the on-chain `name → ik` record names a key that does not claim the name in its signed `Identity.names`, or a claimed name whose chain record resolves to a different key. The chain is a discovery pointer KT audits (§3.3–3.5), never a trust root. | No | FAIL_CLOSED_BLOCK — render the name **unverified**; MUST NOT display it as authenticated nor use it to address mail |
 | `0x011F` | `ERR_RESOLVER_TYPE_UNSUPPORTED` | Resolver-type recognition (§3.12.2) | A name in a resolver type (§21.18) the verifier does not implement, or that is unregistered — the "unknown ⇒ reject, never guess" discipline (as for an unknown suite §1.1 or transport substrate §4.1). The name is unresolvable; the identity is unaffected (its other resolvers and the key-name §3.9.6 still resolve it). | No | FAIL_CLOSED_BLOCK — treat the name as unresolvable; MUST NOT guess a binding |
+| `0x0120` | `ERR_RESOLVER_DISAGREEMENT` | Multi-resolver cross-check (§3.12.3) | Two independent resolvers return **different** `ik` for the **same** name (e.g. a `dns` `_dmtap` pointer and a `name-chain` record the owner also publishes disagree). Since a genuine identity has exactly one key, the disagreement is treated as a potential attack, never silently reconciled to one key. Distinct from `0x011E` (`ERR_NAMECHAIN_BINDING_UNVERIFIED`, the *bidirectional* key↔name mismatch **within one** name-chain resolution): `0x0120` is *inter-resolver* disagreement **across** resolver types (§3.12.3), strengthening the anti-equivocation posture of §3.5. | No | HALT_ALERT — MUST NOT pin; raise a security alert and fall back to KT-quorum (§3.5.2(b)) or out-of-band verification (§3.4.1) to decide the true key |
 
 ## 21.4 Delivery & Validation — the MOTE object (`0x02xx`)
 
@@ -326,6 +327,9 @@ auditability:
 | Org-managed custody undisclosed | `0x0115` |
 | Self-asserted alias fails forward-verify | `0x011C` (identity's own `Identity.names`), `0x0114` (org directory's assertion) |
 | Alias revoked (independently-revocable, other aliases unaffected) | `0x011D` |
+| Name-chain bidirectional key↔name binding disagrees (within one resolution) | `0x011E` |
+| Resolver type unimplemented/unregistered (unknown ⇒ reject, never guess) | `0x011F` |
+| Multi-resolver disagreement (two resolvers, different keys, same name) | `0x0120` |
 | Committer-fork-detected | `0x0404` |
 | Committer-unreachable | `0x0405` |
 | Deniable prekey invalid/exhausted | `0x040B` |
@@ -400,7 +404,7 @@ extension procedure in §21.25. Allocation policies use the standard terms of RF
 | **Registry name** | DMTAP Error/Status Codes |
 | **Reference** | §21.1–§21.11 (this document) |
 | **Allocation policy** | New subsystem byte (`0x09`–`0xEF`): Standards Action. New code point within an existing subsystem (`NN` = `0x01`–`0x7F`): Specification Required. `NN` = `0x80`–`0xFE` within any subsystem: Private Use (implementation-local diagnostics; MUST map to the nearest standard code's Responder Action, §21.2, for any behavior visible to another implementation). `SS`/`NN` = `0x00` or `0xFF`: Reserved. |
-| **Initial contents** | The 132 codes enumerated in §21.3–§21.11. |
+| **Initial contents** | The 133 codes enumerated in §21.3–§21.11. |
 | **Registry discipline** | Append-only. A retired code MUST be marked Deprecated, never deleted or reassigned to a different meaning (mirroring the append-only philosophy of the KT log, §3.5). |
 
 ## 21.15 Algorithm Suites Registry (`suite` u8)
@@ -432,15 +436,15 @@ extension procedure in §21.25. Allocation policies use the standard terms of RF
 | **Allocation policy** | Initial four types: assigned. Additional types: Specification Required — a new challenge type MUST specify its verification procedure (verifiable without decrypting the payload, per §2.2b), its issuer-trust model (per the §9.3.1 zero-default-budget rule, so a new type cannot bypass "cost for cold contact"), and its interaction with the §2.7a disposition (invalid/forged vs. absent/insufficient). `0x40`–`0xFE` (if a numeric tag encoding is used): Private Use. |
 | **Initial contents** | `pow(bits)` (§9.4); `token(issuer)` — ARC-style anonymous rate-limited credential (§9.3); `stamp(amount)` — postage (§9.5); `vouch(guardianSet)` (§9.7). |
 
-## 21.18 Name Backends Registry
+## 21.18 Identity Resolver Types Registry
 
 | | |
 |---|---|
-| **Registry name** | DMTAP Name Backends |
-| **Reference** | §3.1, §3.6, §3.9.2 |
-| **Allocation policy** | Specification Required. A new backend MUST specify how it maps `name → ik` such that only `IK` can update the binding, and MUST state whether/how it composes with key transparency (§3.5) and with resolution order (§3.3). |
-| **Initial contents** | `dns` (the default backend, §3.2 — TXT/SVCB records); `name-chain` (self-sovereign, un-seizable naming, §3.6 — the one place a blockchain is admitted, confined to this layer); `directory` (the opt-in flat `@handle` registry, §3.9.2, itself KT-audited). |
-| **Note** | Onboarding Tiers A/B/C (§3.8) are deployment postures over the `dns` backend, not separate backends, and are not separately registered here. |
+| **Registry name** | DMTAP Identity Resolver Types (the pluggable resolution framework, §3.12; supersedes the earlier "Name Backends" framing by generalizing it to cover the zero-authority `self`/`petname` types as well as the lookup-based backends) |
+| **Reference** | §3.12 (framework), §3.1, §3.3, §3.6, §3.9.2, §3.13 |
+| **Allocation policy** | Specification Required. Each registration MUST state the four things of §3.12.2 and **nothing that touches identity**: **(i)** the resolver-type tag; **(ii)** the **name form** — how a name in this type is written and whether it carries an `@namespace` (§3.13); **(iii)** discovery — how step 1 obtains the `name → ik` pointer such that only `IK` can update the binding; **(iv)** KT anchoring — how the binding is verified against key transparency (§3.5) and composes with resolution order (§3.3), or, for a derivational type, why verification is vacuous. A resolver type MUST NOT introduce its own trust root (authenticity is always the key, §3.12.1). |
+| **Initial contents (name form ⇒ type)** | `self` — the **key-name** (§3.9.6): a bare **8-word** name derived as `BLAKE3-256(ik)`, **no `@`**, no namespace; discovery is a local derivation and KT verification is vacuous (the binding *is* the key); the always-available zero-authority floor. `petname` — a **local**, bare label a user assigns to an already-pinned contact (§3.9.3), **no `@`**, no global lookup; verification vacuous (bound to a pinned key). `dns` — the default, recommended type (§3.2): `local@domain` (`alice@provider.com`), discovered via a `_dmtap` TXT/SVCB record, forward-verified in KT (§3.3, §3.5). `name-chain` — OPTIONAL crypto name (§3.6, §3.12.5): a dotted-TLD `local@.eth` / `.sol` (ENS/SNS registered today; `.hns` etc. by future registration), discovered by reading the chain's on-chain `name → ik` record, bound **bidirectionally** and KT-audited (§3.12.5(b)). `directory` — the opt-in flat `@handle` registry (§3.9.2), where the leading `@` **is** the namespace marker; `handle → ik` in a KT-audited log. |
+| **Note** | Onboarding Tiers A/B/C (§3.8) and the provisioning tiers 0–3 (§3.11.2) are deployment postures over the `dns` type, not separate resolver types, and are not separately registered here. `self` and `petname` are the two **zero-authority** types (no `@`, no lookup, no registration) that make identity and delivery need no naming system at all (§3.13). |
 
 ## 21.19 KT Log Identification Registry
 
@@ -559,13 +563,13 @@ fragmenting."
 
 ## 21.26 Summary
 
-- **Error/status codes defined:** 132 (`0x0101`–`0x011F`: 31, incl. the KT-v1 detection codes
+- **Error/status codes defined:** 133 (`0x0101`–`0x0120`: 32, incl. the KT-v1 detection codes
   `0x0110`–`0x0112`, the org-administration codes `0x0113`–`0x0115` (§3.10), `0x0116`
   device-attestation and `0x0118` attestation-expired (§1.2a), `0x0117` KT leaf-hash mismatch
   (§3.5, §18.4.9), the `Profile` display-data codes `0x0119` (signature invalid), `0x011A`
   (avatar content-address mismatch) and `0x011B` (avatar URL unsafe / SSRF guard) (§3.9.5,
   §18.4.12), and the alias codes `0x011C` (self-asserted alias fails forward-verify) and `0x011D`
-  (independently-revocable alias revoked) (§3.9.4, §3.11), and the resolver codes `0x011E` (name-chain binding unverified) and `0x011F` (resolver-type unsupported) (§3.12); `0x0201`–`0x0210`: 16, incl. `0x020F` suite-downgrade and `0x0210`
+  (independently-revocable alias revoked) (§3.9.4, §3.11), and the resolver codes `0x011E` (name-chain bidirectional binding unverified, §3.12.5(b)), `0x011F` (resolver-type unsupported, §3.12.2) and `0x0120` (inter-resolver disagreement, §3.12.3) (§3.12); `0x0201`–`0x0210`: 16, incl. `0x020F` suite-downgrade and `0x0210`
   hybrid-suite-incomplete (intra-suite PQ-strip defense, §1.3);
   `0x0301`–`0x0316`: 22, incl. `0x030A` capability-announce
   rollback (§10.2), the mixnet codes `0x030B`–`0x0311` — directory/descriptor/path (`0x030B`–`0x030D`),
@@ -590,7 +594,7 @@ fragmenting."
   spanning the 8 requested subsystems, with every code resolving to exactly one of the 13
   defined responder actions (§21.2) — no undefined behavior remains.
 - **IANA registries defined:** **11 registries + 1 extension/versioning procedure** — the 8
-  requested registries (Algorithm Suites, Message Kinds, Challenge Types, Name Backends, KT Log
+  requested registries (Algorithm Suites, Message Kinds, Challenge Types, Identity Resolver Types, KT Log
   Types, `Headers.ext` Keys, DNS Parameters, Capability Tokens), the **Mix Parameters** registry
   (§21.23) and **Transport Substrates** registry (§21.24) added for the mixnet and substrate seams
   (§4.4, §4.1), and the DMTAP Error/Status Code Registry itself (§21.14, needed to make Part 1
