@@ -344,6 +344,54 @@ gateway** (a pure-mesh message is provably end-to-end, §7.8.1(b)), and every ga
 **marked** so the user sees which mail crossed the bridge (`ProvenanceRecord`, §8.6). DMTAP states this
 honestly rather than implying the bridge inherits mesh privacy.
 
+### 7.10.5 Aliases the gateway can and cannot mint — vanity local-parts (normative)
+
+A gateway/cloud operator **can only alias what already exists**; it **MUST NOT mint a global name**.
+Every DMTAP NAME is **anchored** — to DNS (`local@domain`) or to a crypto name-chain (`name.eth`,
+`name.sol`, §3.12.5) — with the derived **8-word key-name (§3.9.6) as the zero-authority floor**
+beneath all of them. A gateway alias is therefore **never a new identity**; it is exactly one of two
+things:
+
+- **(a) a pointer at the user's own anchor** — the reply-path rewrite and the two encodings of
+  §7.10.1–§7.10.2, which merely re-route to an address the user already controls; or
+- **(b) a fully-qualified local-part under a domain the GATEWAY owns** — `you@gw.example`, valid
+  **only** as `localpart@gatewaydomain`. Because the `@gatewaydomain` suffix disambiguates it, case (b)
+  **cannot collide with a network name**: it is a name *in the gateway's own namespace*, not a global
+  handle.
+
+**Vanity local-parts (chosen short names on the gateway's own domain).** A **vanity** is a
+user-*chosen* local-part in case (b) — `alice@gw.example`. It is the **only** alias form with
+**ownership semantics**, and it is fenced in:
+
+- A vanity **MUST be dot-free**, and **MUST** be valid **only** fully-qualified (`vanity@gatewaydomain`),
+  **never** as a bare handle. A **bare, un-anchored handle is FORBIDDEN** (§3.13.1): allocating a
+  globally-unique name from a bare string is the **flat-namespace consensus problem DMTAP deliberately
+  does not solve** (Zooko, §3.9, §15.5); the **key-name is the floor instead** (§3.9.6). A gateway that
+  hands out a bare handle would be claiming an authority it does not have.
+- **Dotted local-parts are RESERVED** for the forwarded-address encoding `local.nativedomain@gateway`
+  (§7.10.2). The **dot-free-vanity vs. dotted-forwarded** split makes the two **unambiguous** at the
+  gateway: a `.` in the local-part means "decode a forwarded native address," its absence means "look up
+  a vanity registration."
+- A vanity is **first-come and revocable** — **yours only as long as you hold the registration on the
+  gateway's domain** (§3.11.5's provider-dependence, applied to the gateway's namespace). It carries the
+  same honest residual as any tier-1 vanity (§3.11.2): the gateway MAY de-allocate it, and the **key +
+  key-name survive** untouched (§3.9.6).
+- A vanity **MUST yield to, and MUST NEVER shadow, a real network name.** If a resolvable `name@domain`
+  or name-chain name exists, that anchored name wins; the gateway MUST NOT let a chosen vanity mask or
+  intercept delivery to an anchored name.
+
+**The two AUTO-derived aliases are conflict-free (normative).** Two of a gateway's aliases are
+**un-chosen** — they need no registration, cannot collide, and are **always available**:
+
+1. the **key-derived** alias `dmtap1-<base32>@gateway` — a deterministic encoding of the identity key
+   (the §3.9.6 key-name family), unique-by-hash exactly as the key-name is; and
+2. the **forwarded encoding** `local.nativedomain@gateway` (§7.10.2), self-describing and reversible.
+
+Neither is user-chosen, so neither raises an ownership question and neither can be squatted; both are
+offered by default. **Chosen vanity is the ONLY alias form with ownership semantics** — and it is
+precisely the form an operator MAY price and revoke (§7.14), because it is the only one that consumes a
+scarce, human-chosen local-part in the gateway's namespace.
+
 ## 7.11 Bidirectional anti-abuse is mandatory (normative floor)
 
 A gateway sits on the boundary between the accountable mesh (§9) and the open legacy world, so it is
@@ -472,3 +520,39 @@ The dividing rule is identical to §3.11's for names and §12.3's inviolable met
 independent implementations must agree on to interoperate securely is in-spec; what an operator may set
 unilaterally without breaking any other party is out of scope.** A gateway that changes its prices or
 caps stays conformant; a gateway that skips the §7.11 floor or the §7.12 handshake shape does not.
+
+## 7.14 Gateway/cloud business-model seam (informative)
+
+This section is **informative**. It sketches how an operator MAY build a *business* on top of the
+normative floor without any of it entering the interop contract. The §7.13 rule stands — **the interop
+and security floor is in-spec; metering and pricing are operator policy** — and what follows is only a
+**vendor-neutral reference model** (no company, no price).
+
+**What is always free and works with no operator.** Identity, keys, the key-name (§3.9.6), the
+node, the client, and the protocol itself are **free and operator-independent**: a user holding a
+keypair is a first-class DMTAP identity — reachable, verifiable, and deliverable-to — with **no**
+gateway or cloud in the path (§3.13, §7.7). Nothing an operator sells can gate that, and an operator
+that disappears takes only its *conveniences* with it (§3.11.5); self-hosting the same functions costs
+the operator nothing to permit (§3.11.2 tier 3).
+
+**What an operator MAY meter.** On top of that floor, a reference operator sells **three usage
+meters**, each tied to a convenience the user explicitly opted into:
+
+1. **alias** — a **local-part on the operator's own domain** (a vanity, §7.10.5): the scarce,
+   human-chosen name the operator's namespace supplies.
+2. **gateway usage** — **legacy bridging** (§7): the SMTP-facing ingress/egress work of translating to
+   and from old email, including the IP reputation the operator carries.
+3. **node usage** — **hosted storage / relay**: the durability and reachability the operator hosts on
+   the user's behalf (§5.5.1 pinning, §14).
+
+**The two seams (all metering rides these).** Every one of the above is expressed through **exactly
+two seams**, the *only* operator-specific surfaces:
+
+- an **authorization / quota decision** — "is this request allowed, and is it within quota?" (the
+  `GatewayAuthz` / `Policy` decision, §12.2); and
+- an **append-only usage meter** — "record that it happened" (the §12.2 operation meter, governed by
+  the inviolable metering rule of §12.3).
+
+Both seams are **out of scope for interop** (§7.13): two independent operators need not agree on prices,
+quotas, or plans to interoperate, and a user MAY switch operators — or self-host — **without changing
+identity or keys**. DMTAP specifies the **seam shape**, never a company, a price, or a plan.

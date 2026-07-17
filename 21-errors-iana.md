@@ -300,6 +300,7 @@ loss window is disclosed and irreducible; here it is fully closed by never `250`
 | `0x080A` | `ERR_FILE_MANIFEST_INVALID` | `ManifestRef.durability` validation (§5.5.2, §18.3.7) | A **Referenced** file's `ManifestRef` is missing its REQUIRED `durability`, carries an **unknown** `class`, a `cluster-replicated` (`class = 2`) with `replicas < 1`/absent, or a `pinned` (`class = 3`) with no `retention` — a malformed/underspecified durability contract. | No | FAIL_CLOSED_BLOCK — reject; MUST NOT treat an unspecified contract as durable, nor silently downgrade to best-effort |
 | `0x080B` | `ERR_FILE_RETENTION_EXPIRED` | `pinned(term)` retention check (§5.5.2, §5.5.4, §16.4) | A `pinned` (`class = 3`) contract's `retention` term has elapsed (or a holder is asked to serve past its committed retention); the pin is no longer honored and the bytes MAY have been GC'd. | Yes, if re-pinned before GC | REJECT_NOTIFY — renew/re-pin before expiry (§5.5.2); a retention-expiry race is closed by renewing ahead of the term |
 | `0x080C` | `ERR_SPOOL_OVERFLOW` | Inbound push admission, spool cap (§5.5.5, §16.4) | A **pushed** Inline/Attached file would exceed the recipient's inbound spool cap for that sender — a storage-based DoS (spool-fill) attempt. Refused, never silently accepted or silently dropped. | Yes, after the recipient frees space / the sender proves legitimacy | DENY_POLICY — fail closed; an unproven/cold sender's pushes also spend the requests-area + anti-abuse budget (§2.7a, §9, §16.5) |
+| `0x080D` | `ERR_FILE_SIZE_TIER_VIOLATION` | `Attachment` delivery-mechanism validation (§5.5.1, §18.3.7) | An `Attachment`'s declared delivery mechanism/size is internally inconsistent: an **oversize `inline`** (the inlined bytes exceed the §16.4 inline ceiling), **both or neither** of `inline`/`manifest` present (the §18.3.7 "exactly one of {`inline`,`manifest`} MUST be present" invariant broken), or a **`size` that disagrees** with the `inline` byte length / `ManifestRef.size`. Distinct from `0x0804` (`ERR_SIZE_TIER_MISMATCH`), which concerns the **MOTE's routed privacy tier**; `0x080D` is the **attachment record disagreeing with itself**. | No | FAIL_CLOSED_BLOCK — reject the attachment; MUST NOT guess the intended mechanism nor silently re-tier |
 
 ## 21.12 Traceability matrix
 
@@ -378,6 +379,7 @@ auditability:
 | File durability contract missing/malformed (Referenced tier) | `0x080A` |
 | Pinned-term retention expired / retention-expiry race | `0x080B` |
 | Spool overflow (pushed-attachment storage DoS) | `0x080C` (push admission), `0x0806` (hosted quota) |
+| Attachment delivery mechanism/size self-inconsistent (oversize inline; both/neither of inline+manifest; size mismatch) | `0x080D` |
 
 ---
 
@@ -404,7 +406,7 @@ extension procedure in §21.25. Allocation policies use the standard terms of RF
 | **Registry name** | DMTAP Error/Status Codes |
 | **Reference** | §21.1–§21.11 (this document) |
 | **Allocation policy** | New subsystem byte (`0x09`–`0xEF`): Standards Action. New code point within an existing subsystem (`NN` = `0x01`–`0x7F`): Specification Required. `NN` = `0x80`–`0xFE` within any subsystem: Private Use (implementation-local diagnostics; MUST map to the nearest standard code's Responder Action, §21.2, for any behavior visible to another implementation). `SS`/`NN` = `0x00` or `0xFF`: Reserved. |
-| **Initial contents** | The 133 codes enumerated in §21.3–§21.11. |
+| **Initial contents** | The 134 codes enumerated in §21.3–§21.11. |
 | **Registry discipline** | Append-only. A retired code MUST be marked Deprecated, never deleted or reassigned to a different meaning (mirroring the append-only philosophy of the KT log, §3.5). |
 
 ## 21.15 Algorithm Suites Registry (`suite` u8)
@@ -588,9 +590,10 @@ fragmenting."
   alias non-reversible/over-length) (§7.10) and the outbound open-relay-prevention code `0x0607`
   (`ERR_GATEWAY_SENDER_UNAUTHENTICATED`, the §7.11.2/§9.10 authenticated-sender floor), plus the
   informative SMTP mapping table of §21.9;
-  `0x0701`–`0x070E`: 14; `0x0801`–`0x080C`: 12, incl. `0x0808` manifest-key-present (§5.5) and the
+  `0x0701`–`0x070E`: 14; `0x0801`–`0x080D`: 13, incl. `0x0808` manifest-key-present (§5.5), the
   file-durability codes `0x0809`–`0x080C` (§5.5.1–§5.5.5) — file-unavailable (origin-hold residual),
-  manifest-durability-invalid, retention-expired, and spool-overflow (pushed-attachment storage DoS)),
+  manifest-durability-invalid, retention-expired, and spool-overflow (pushed-attachment storage DoS) —
+  and `0x080D` file-size-tier-violation (attachment delivery-mechanism/size self-inconsistent, §5.5.1)),
   spanning the 8 requested subsystems, with every code resolving to exactly one of the 13
   defined responder actions (§21.2) — no undefined behavior remains.
 - **IANA registries defined:** **11 registries + 1 extension/versioning procedure** — the 8
