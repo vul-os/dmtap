@@ -110,6 +110,8 @@ fixed here once so the tables can cite them tersely without re-explaining each t
 | `0x0119` | `ERR_PROFILE_SIG_INVALID` | `Profile` verification (§3.9.5, §18.4.12, §18.9.3) | A `Profile`'s `sig` does not verify under the identity's `IK` (or an `IK`-authorized device key). Profile display data is self-asserted (authenticated to the key, never a real-world-identity claim); a bad signature means the data is not authorized by the key. | No | FAIL_CLOSED_BLOCK — reject the object; retain the prior pinned `Profile` or fall to the §3.9.5 avatar/initials fallback ladder |
 | `0x011A` | `ERR_PROFILE_AVATAR_HASH_MISMATCH` | `Profile` avatar integrity check (§3.9.5, §18.4.12) | A `Profile` carries `avatar.hash`, but the bytes fetched from `avatar.url` do not content-address (`0x1e ‖ BLAKE3-256`) to it — the owner-hosted image was swapped/tampered. Tamper-evidence, not a hosting guarantee. | Yes (re-fetch; a corrected host resolves it) | USER_WARN — MUST NOT display the fetched image; fall back down the §3.9.5 ladder (key-derived identicon, then initials) and surface a non-blocking warning |
 | `0x011B` | `ERR_PROFILE_AVATAR_URL_UNSAFE` | `Profile` avatar URL safety check (§3.9.5, §18.4.12) | `avatar.url` is attacker-chosen data whose scheme is not `https`, or which resolves (incl. after any redirect) to a loopback / private (RFC 1918 / RFC 4193 ULA) / link-local (`169.254.0.0/16`, cloud-metadata `169.254.169.254`) / non-global address — a server-side-request-forgery or internal-probe attempt via a display pointer. | No | FAIL_CLOSED_BLOCK — MUST NOT fetch the URL; fall back down the §3.9.5 ladder (key-derived identicon, then initials) |
+| `0x011C` | `ERR_ALIAS_FORWARD_UNVERIFIED` | Self-asserted-name forward-binding check (§3.9.4, §3.11.3) | A name in the identity's own `Identity.names` (a self-asserted alias) whose forward `name → ik` binding (DNS + KT, §3.3–3.5) does not resolve back to this same identity key — an alias claiming an address the key does not control. The self-asserted-name analogue of the org-directory forward-verify (`0x0114`), applied to the identity's own list. | No | FAIL_CLOSED_BLOCK — render the alias **unverified**; MUST NOT display it as authenticated nor use it to address mail |
+| `0x011D` | `ERR_ALIAS_REVOKED` | Revoked-alias use check (§3.9.4, §3.11.3, §3.11.5) | An alias used to address the identity has been **revoked** (dropped in a newer signed `Identity` version and its `name → ik` DNS + KT binding retired), while the key and the identity's other aliases remain valid. Independently-revocable aliases: revoking one MUST NOT be usable off a stale cache. | No (this alias) | REJECT_NOTIFY — tell the sender to use a live alias or the key-name (§3.9.1); the key and other aliases are unaffected |
 
 ## 21.4 Delivery & Validation — the MOTE object (`0x02xx`)
 
@@ -186,6 +188,10 @@ to a MOTE) is a distinct concept scoped to the Auth ceremony; see `0x0502` (§21
 | `0x040D` | `ERR_DENIABLE_RATCHET_AUTH_FAILED` | Double-Ratchet message auth (§5.2.1(b), §18.9.10) | A `DeniableMessage` AEAD tag (the shared-key MAC) fails to verify, or the message is irrecoverably out of ratchet order (beyond MAX_SKIP, §16.9). | No (this message) | DROP_SILENT — a MAC failure reveals nothing to notify; skipped-key exhaustion holds for resync |
 | `0x040E` | `ERR_DENIABLE_MODE_UNAVAILABLE` | Deniable-mode capability check (§5.2.1(d), §10.2) | The recipient has not advertised the `deniable-1:1` capability token, so a deniable session cannot be established. | Conditional (recipient may advertise it later) | REJECT_NOTIFY — the client MUST surface the choice (send non-deniable, or not at all); MUST NOT silently downgrade the user's expectation of deniability |
 | `0x040F` | `ERR_DENIABLE_SIGNATURE_PRESENT` | `DeniablePayload` decode (§5.2.1(c), §18.3.10) | A `DeniablePayload` carries a signature field — its presence would make the transcript attributable and defeat the mode's whole purpose. | No | FAIL_CLOSED_BLOCK — reject the message; the deniable payload MUST be MAC-authenticated only, never signed |
+| `0x0410` | `ERR_CLUSTER_DEVICE_UNAUTHORIZED` | Device-cluster sync membership check (§5.6.1, §18.6.3) | A `ClusterSyncFrame`/`ClusterOp` from a device whose `DeviceCert` is absent, invalid, or **revoked** (KeyRotation-excluded) under the owner's `IK` — not a current, non-revoked cluster member. Replication is mutually authenticated; a non-member cannot inject or pull cluster data. | No | FAIL_CLOSED_BLOCK — refuse the peer; do not exchange objects or ops with it |
+| `0x0411` | `ERR_CLUSTER_RECON_SUMMARY_INVALID` | Range-based reconciliation summary check (§5.6.3(a), §18.6.3) | A `ClusterSyncFrame` `recon` summary is malformed, or a `RangeFingerprint.fp` does not recompute over the ids the receiver holds in the claimed `[lo, hi)` range — a peer serving forged Merkle fingerprints to suppress or misrepresent objects. | Yes (re-drive against another peer) | FAIL_CLOSED_BLOCK — MUST NOT trust the summary; reconcile against a different cluster member |
+| `0x0412` | `ERR_CLUSTER_JOURNAL_CHAIN_BROKEN` | Journal-replay backfill chain check (§5.6.3(b), §18.6.3) | A per-account append-only journal presented for replay has a `prev` chain that does not verify — a fork or rewrite of the owner's **own** hash-chained log (the cluster analogue of a committer fork, `0x0404`, and KT append-only violation, `0x0110`). | No | HALT_ALERT — stop replaying the forked journal, alert the owner; fall back to range reconciliation (§5.6.3(a)) on the honest peers |
+| `0x0413` | `ERR_CLUSTER_CRDT_OP_INVALID` | Cluster CRDT op validation (§5.6.4, §18.6.3) | A `ClusterOp` is malformed — unknown `kind`, an OR-Set remove citing an unknown add-tag, or an HLC whose `wall` is more than the clock-skew bound (§16.10) ahead of the receiver (a "win-forever" clock) — or it embeds a `DeniablePayload`/its plaintext (forbidden in the cluster CRDT, §5.2.1). | No | FAIL_CLOSED_BLOCK — reject the op; MUST NOT apply it to the CRDT state |
 
 ## 21.7 Auth errors — DMTAP-Auth (`0x05xx`)
 
@@ -211,6 +217,8 @@ to a MOTE) is a distinct concept scoped to the Auth ceremony; see `0x0502` (§21
 | `0x0602` | `ERR_GATEWAY_ATTESTATION_KEY_UNTRUSTED` | Inbound attestation key lookup (§7.2a, §18.3.11) | The attestation key (`<selector>._dmtap-gw.<domain>`) is not published under the recipient's own domain's `_dmtap-gw` record, nor in an explicitly trusted set (incl. a chained entry under an untrusted `domain`, §7.8.3). | No | DROP_SILENT |
 | `0x0603` | `ERR_DKIM_DELEGATION_INVALID` | Outbound DKIM verification at destination MTA (§7.3) | The gateway's delegated-selector DKIM signature fails to verify at the receiving legacy system. | Yes (fix key publication) | REJECT_NOTIFY — the sending node's queue retries per §7.4 |
 | `0x0604` | `ERR_MX_TRANSIENT_FAILURE` | Outbound SMTP transaction (§7.3) | The destination MX rejects or times out the transaction transiently. | Yes | REJECT_NOTIFY — the sending node retries; the gateway holds nothing (§7.4) |
+| `0x0605` | `ERR_GATEWAY_ALIAS_UNMAPPED` | Inbound legacy→native alias mapping (§7.10.2, §7.10.3, §18.3.12) | An inbound legacy message to a gateway alias cannot be mapped back to a native DMTAP address: a `random`-mode alias with no live `GatewayAliasMap` row (missing / expired / `burned`), or an `encoded`-mode local-part that does not decode to a valid `localpart@nativedomain`. The bridge owns no identity, so an unmappable alias is "no such user," not a silent drop. | No | RETURN_SENDER_SMTP — `550 5.1.1` (identical to the §21.9 non-existent-recipient reply, so it leaks nothing) |
+| `0x0606` | `ERR_GATEWAY_ALIAS_ENCODING_INVALID` | Encoded gateway-alias reversibility check (§7.10.2, §18.3.12) | An `encoded` gateway alias (`localpart.nativedomain@gateway.domain`) is malformed: it does not reversibly decode to **exactly one** `(localpart, nativedomain)` (ambiguous/illegal escaping), or it exceeds the RFC 5321 local-part (64 octet) / path (254 octet) limits (§16.11). | No | FAIL_CLOSED_BLOCK — MUST NOT guess a native address from an ambiguous encoding |
 
 ### 21.8.1 Honest limit on `0x0601`/`0x0602`
 
@@ -313,6 +321,8 @@ auditability:
 | Org-directory not authority-signed | `0x0113` |
 | Directory entry fails forward-verify | `0x0114` |
 | Org-managed custody undisclosed | `0x0115` |
+| Self-asserted alias fails forward-verify | `0x011C` (identity's own `Identity.names`), `0x0114` (org directory's assertion) |
+| Alias revoked (independently-revocable, other aliases unaffected) | `0x011D` |
 | Committer-fork-detected | `0x0404` |
 | Committer-unreachable | `0x0405` |
 | Deniable prekey invalid/exhausted | `0x040B` |
@@ -320,6 +330,10 @@ auditability:
 | Deniable ratchet MAC failed | `0x040D` |
 | Deniable mode not advertised | `0x040E` |
 | Deniable payload carries a signature (forbidden) | `0x040F` |
+| Cluster-sync peer is not a non-revoked device | `0x0410` |
+| Cluster reconciliation summary forged/malformed | `0x0411` |
+| Cluster journal hash-chain broken (own-log fork) | `0x0412` |
+| Cluster CRDT op invalid (bad HLC / unknown add-tag / deniable-embed) | `0x0413` |
 | Device hardware-attestation invalid | `0x0116` |
 | Device attestation evidence expired / root retired | `0x0118` |
 | KT inclusion-proof leaf-hash mismatch | `0x0117` |
@@ -335,6 +349,8 @@ auditability:
 | Expired | `0x020B` (MOTE `expires`), `0x0503` (auth challenge) |
 | Quota/policy-deny | `0x070D`, `0x0806` (operator quotas), `0x070B` (recipient blocklist deny) |
 | Gateway-attestation-invalid | `0x0601` |
+| Gateway alias unmappable (legacy→native, no such user) | `0x0605` |
+| Gateway alias encoding non-reversible/over-length | `0x0606` |
 | Postage-double-spend | `0x0708` |
 | Issuer-untrusted | `0x0704` (token issuer), `0x0707` (postage issuer), `0x0509` (OIDC issuer) |
 | Capability-announcement rollback | `0x030A` |
@@ -379,7 +395,7 @@ extension procedure in §21.25. Allocation policies use the standard terms of RF
 | **Registry name** | DMTAP Error/Status Codes |
 | **Reference** | §21.1–§21.11 (this document) |
 | **Allocation policy** | New subsystem byte (`0x09`–`0xEF`): Standards Action. New code point within an existing subsystem (`NN` = `0x01`–`0x7F`): Specification Required. `NN` = `0x80`–`0xFE` within any subsystem: Private Use (implementation-local diagnostics; MUST map to the nearest standard code's Responder Action, §21.2, for any behavior visible to another implementation). `SS`/`NN` = `0x00` or `0xFF`: Reserved. |
-| **Initial contents** | The 121 codes enumerated in §21.3–§21.11. |
+| **Initial contents** | The 129 codes enumerated in §21.3–§21.11. |
 | **Registry discipline** | Append-only. A retired code MUST be marked Deprecated, never deleted or reassigned to a different meaning (mirroring the append-only philosophy of the KT log, §3.5). |
 
 ## 21.15 Algorithm Suites Registry (`suite` u8)
@@ -458,7 +474,7 @@ extension procedure in §21.25. Allocation policies use the standard terms of RF
 | **Registry name** | DMTAP Capability Tokens |
 | **Reference** | §10.2, `system` MOTEs (`kind = 0x0A`) |
 | **Allocation policy** | Specification Required for tokens intended to be portable across implementations; `x-`-prefixed tokens are Private Use / FCFS, mirroring §21.20. |
-| **Initial contents** | Supported-suite tokens (§1.1); privacy-tier tokens (`private`, `fast`, §4.6); supported MLS ciphersuite tokens (§5.1); the **`deniable-1:1`** token (advertises support for the optional deniable 1:1 mode, §5.2.1 — both peers MUST advertise it before a deniable session is established); KT log-type tokens (`0x01`/`0x02`, §3.5.2, §21.19); mix-suite tokens (§4.4.12, §21.23); transport-substrate tokens (§4.1, §21.24); the **`push-wake`** token (advertises support for the OPTIONAL push wake-signaling layer of §4.9 — a device/node feature, not required for Core, negotiated device↔node); supported extension-kind/extension-header tokens (cross-referencing §21.16/§21.20 registrations); and **signed-object `≥ 64` extension-field tokens** — a peer advertises support for a reserved extension field before any sender may include it in a *signed* object (§18.1.2, §10.2). |
+| **Initial contents** | Supported-suite tokens (§1.1); privacy-tier tokens (`private`, `fast`, §4.6); supported MLS ciphersuite tokens (§5.1); the **`deniable-1:1`** token (advertises support for the optional deniable 1:1 mode, §5.2.1 — both peers MUST advertise it before a deniable session is established); KT log-type tokens (`0x01`/`0x02`, §3.5.2, §21.19); mix-suite tokens (§4.4.12, §21.23); transport-substrate tokens (§4.1, §21.24); the **`push-wake`** token (advertises support for the OPTIONAL push wake-signaling layer of §4.9 — a device/node feature, not required for Core, negotiated device↔node); the **`cluster-sync`** token (advertises the device-cluster backfill method — range-based Merkle reconciliation and/or journal replay, §5.6.3 — negotiated device↔device within one identity's cluster); supported extension-kind/extension-header tokens (cross-referencing §21.16/§21.20 registrations); and **signed-object `≥ 64` extension-field tokens** — a peer advertises support for a reserved extension field before any sender may include it in a *signed* object (§18.1.2, §10.2). |
 | **Announcement versioning** | Capability announcements are **monotonic**: each carries a `caps_version` (`u64`) and a receiver rejects an announcement older-or-equal to the last accepted from that peer (`ERR_CAPABILITY_ANNOUNCE_ROLLBACK`, `0x030A`, §10.2), so a stale replay cannot suppress an advertised capability. |
 | **Forward-compatibility rule** | A node receiving a capability token it does not recognize MUST ignore that token (not the whole `system` MOTE) and MUST NOT assume the counterpart lacks the capability merely because the token name is unfamiliar — absence of a recognized token (in the current, highest-`caps_version` announcement) is inconclusive, not a negative assertion. |
 
@@ -538,11 +554,13 @@ fragmenting."
 
 ## 21.26 Summary
 
-- **Error/status codes defined:** 121 (`0x0101`–`0x011B`: 27, incl. the KT-v1 detection codes
+- **Error/status codes defined:** 129 (`0x0101`–`0x011D`: 29, incl. the KT-v1 detection codes
   `0x0110`–`0x0112`, the org-administration codes `0x0113`–`0x0115` (§3.10), `0x0116`
   device-attestation and `0x0118` attestation-expired (§1.2a), `0x0117` KT leaf-hash mismatch
-  (§3.5, §18.4.9), and the `Profile` display-data codes `0x0119` (signature invalid), `0x011A`
-  (avatar content-address mismatch) and `0x011B` (avatar URL unsafe / SSRF guard) (§3.9.5, §18.4.12); `0x0201`–`0x0210`: 16, incl. `0x020F` suite-downgrade and `0x0210`
+  (§3.5, §18.4.9), the `Profile` display-data codes `0x0119` (signature invalid), `0x011A`
+  (avatar content-address mismatch) and `0x011B` (avatar URL unsafe / SSRF guard) (§3.9.5,
+  §18.4.12), and the alias codes `0x011C` (self-asserted alias fails forward-verify) and `0x011D`
+  (independently-revocable alias revoked) (§3.9.4, §3.11); `0x0201`–`0x0210`: 16, incl. `0x020F` suite-downgrade and `0x0210`
   hybrid-suite-incomplete (intra-suite PQ-strip defense, §1.3);
   `0x0301`–`0x0316`: 22, incl. `0x030A` capability-announce
   rollback (§10.2), the mixnet codes `0x030B`–`0x0311` — directory/descriptor/path (`0x030B`–`0x030D`),
@@ -551,11 +569,14 @@ fragmenting."
   (`0x0311`, §4.4.2) — and the OPTIONAL push wake-signaling codes `0x0312`–`0x0316` (§4.9):
   subscription-not-authenticated, WakePing-content-present, WakePing-auth-failed,
   WakePing-rate-limited (emitter + receiver), and WakePing-replay (relay-replay battery-drain);
-  `0x0401`–`0x040F`: 15, incl. the deniable-mode codes `0x040B`–`0x040F` (§5.2.1) — prekey
+  `0x0401`–`0x0413`: 19, incl. the deniable-mode codes `0x040B`–`0x040F` (§5.2.1) — prekey
   invalid/exhausted, X3DH/PQXDH failure, ratchet-MAC failure, mode-unavailable, and the
-  signature-forbidden guard;
-  `0x0501`–`0x050B`: 11, incl. `0x050B` capability-revoked (§13.5, §18.7.3); `0x0601`–`0x0604`: 4,
-  plus the informative SMTP mapping table of §21.9;
+  signature-forbidden guard — and the device-cluster sync codes `0x0410`–`0x0413` (§5.6):
+  cluster-device-unauthorized, reconciliation-summary-invalid, journal-chain-broken (own-log fork),
+  and cluster-CRDT-op-invalid;
+  `0x0501`–`0x050B`: 11, incl. `0x050B` capability-revoked (§13.5, §18.7.3); `0x0601`–`0x0606`: 6,
+  incl. the gateway-alias codes `0x0605` (legacy→native alias unmappable) and `0x0606` (encoded
+  alias non-reversible/over-length) (§7.10), plus the informative SMTP mapping table of §21.9;
   `0x0701`–`0x070E`: 14; `0x0801`–`0x080C`: 12, incl. `0x0808` manifest-key-present (§5.5) and the
   file-durability codes `0x0809`–`0x080C` (§5.5.1–§5.5.5) — file-unavailable (origin-hold residual),
   manifest-durability-invalid, retention-expired, and spool-overflow (pushed-attachment storage DoS)),

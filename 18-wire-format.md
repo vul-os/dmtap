@@ -584,6 +584,37 @@ key (§7.3): DKIM authenticates the *outbound* legacy leg to the legacy world, w
 attestation authenticates the *inbound* bridge to the mesh recipient. Neither is the user's DMTAP
 identity key, which the gateway never holds (§7.3).
 
+### 18.3.12 `GatewayAliasMap` (§7.10)
+
+The gateway-held **native ↔ legacy alias mapping** for the **random** alias mode (§7.10.2). It is
+**gateway-local state** (persisted/optionally synced within the gateway), **not** mesh-transmitted
+and **not** part of any user's identity — the alias is a rotatable bridge pointer, the native
+address is the anchor (§7.10.4). The **encoded** alias mode needs **no** row: the alias
+`localpart.nativedomain@gateway.domain` is a self-describing reversible transform (§7.10.2), so its
+"mapping" is the decode function, not a table.
+
+```cddl
+GatewayAliasMap = {
+  1 => tstr,        ; alias         the gateway-local localpart (<rand>, or the encoded localpart for logging)
+  2 => tstr,        ; native        the native DMTAP address "localpart@nativedomain" it maps to
+  3 => u8,          ; mode          1 = encoded (self-describing), 2 = random (this table row)
+  ? 4 => tstr,      ; correspondent legacy peer this alias is scoped/burnable to (mode 2)
+  5 => ts,          ; created
+  ? 6 => ts,        ; expires       absent ⇒ no expiry (§16.11)
+  ? 7 => bool,      ; burned        true ⇒ retired; no longer maps (mode 2)
+}
+```
+
+| Field | Key | Type | Presence | Meaning & constraints |
+|-------|----:|------|----------|-----------------------|
+| `alias` | 1 | `tstr` | MUST | The gateway-local local-part the legacy world addresses. For `mode = 2` a high-entropy random string; a lookup miss / expired / `burned` row on inbound ⇒ `ERR_GATEWAY_ALIAS_UNMAPPED` (`0x0605`, RETURN_SENDER_SMTP `550 5.1.1`, §7.10.3). |
+| `native` | 2 | `tstr` | MUST | The native `localpart@nativedomain` this alias resolves to. The gateway rewrites the legacy reply-path to `alias@gateway.domain` (§7.10.1) and maps back to `native` on inbound (§7.10.3). |
+| `mode` | 3 | `u8` | MUST | `1` encoded (near-stateless; the row is advisory/logging — the truth is the reversible encoding, §7.10.2; a non-decodable encoded local-part ⇒ `ERR_GATEWAY_ALIAS_ENCODING_INVALID` `0x0606`), `2` random (this row **is** the mapping). |
+| `correspondent` | 4 | `tstr` | OPTIONAL | The single legacy peer a `mode = 2` alias is scoped to — a per-correspondent, burnable "Hide-My-Email"-style alias (§7.10.2). |
+| `created` | 5 | `ts` | MUST | Row creation time. |
+| `expires` | 6 | `ts` | OPTIONAL | Expiry; absent ⇒ no expiry (§16.11). A lookup after `expires` ⇒ `0x0605`. |
+| `burned` | 7 | `bool` | OPTIONAL | `true` retires the alias (user burned it); a burned alias no longer maps (`0x0605`) but is retained to avoid reuse. |
+
 ---
 
 ## 18.4 Identity-layer objects (§1)
@@ -812,10 +843,12 @@ DirEntry = {
   4 => member-custody,   ; custody
   ? 5 => [* tstr],       ; roles      org roles / standing-group memberships (informative)
   6 => ts,               ; added
+  ? 7 => alloc-tier,     ; alloc      provisioning tier disclosure (§3.11.2), informative
 }
 
 dir-visibility = "public" / "members-only"
 member-custody = "sovereign" / "org-managed"
+alloc-tier     = "random" / "vanity" / "byod"     ; tiers 0 / 1 / 2 (§3.11.2)
 ```
 
 | Object | Field | Key | Type | Presence | Meaning & constraints |
@@ -834,6 +867,7 @@ member-custody = "sovereign" / "org-managed"
 | | `custody` | 4 | `member-custody` | MUST | `"sovereign"` (member holds their own key; the org cannot access, §3.10.2(a)) or `"org-managed"` (org holds/escrows the key — a disclosed §6.6-style limit, §3.10.2(b)). An `"org-managed"` entry MUST be rendered as such; presenting one as sovereign MUST fail closed (`ERR_ORG_MANAGED_UNDISCLOSED`, `0x0115`). |
 | | `roles` | 5 | `[* tstr]` | OPTIONAL | Informative org roles / standing-group memberships (§13.5.1, §5.8.7); authority for a role is the capability (§13.5.1), not this hint. |
 | | `added` | 6 | `ts` | MUST | When the entry was published. |
+| | `alloc` | 7 | `alloc-tier` | OPTIONAL | Informative disclosure of the address's **provisioning tier** (§3.11.2): `"random"` (tier 0, provider-assigned word-combo), `"vanity"` (tier 1, reserved localpart), `"byod"` (tier 2, bring-your-own-domain). Advisory only — it never changes how the binding is verified (still forward DNS + KT, §3.9.4); it lets a client render "how this address was allocated" honestly. |
 
 ### 18.4.8 `DeniablePrekeyBundle` (§5.2.1)
 
@@ -1310,6 +1344,81 @@ GroupEvent = {
 | `prev` | 5 | `hash` | MUST | Hash of the previous log entry (`GroupEvent`), chaining the log. Genesis uses an all-zero digest with the v0 prefix. |
 | `committer_sig` | 6 | `sig-val` | MUST | Committer signature over `(group_id, epoch, mls, log_seq, prev)` (§18.9.6), asserting ordering only. |
 
+### 18.6.3 Device-cluster sync objects (§5.6)
+
+The objects the owner's devices exchange to converge the personal cluster (§5.6). They ride
+**inside the encrypted, authenticated MLS cluster group** (§5.6.1) — like a `DeniableMessage`
+(§18.3.9) they carry **no separate DMTAP signature**: the MLS group provides confidentiality and
+membership authentication, and each op/frame names its origin `device_id` whose non-revoked
+`DeviceCert` (§1.2) a receiver MUST check before acting (`ERR_CLUSTER_DEVICE_UNAUTHORIZED`,
+`0x0410`). A `RangeFingerprint` is additionally **self-verifying** by recomputation (§5.6.3(a)).
+
+```cddl
+; The top-level cluster-sync frame. `type` selects which optional body fields are present.
+ClusterSyncFrame = {
+  1 => u8,                     ; type      1=announce 2=recon 3=fetch-request 4=journal 5=stability
+  2 => ik-pub,                 ; device    origin device key (a non-revoked DeviceCert subject, §5.6.1)
+  ? 3 => [* hash],             ; ids       object content-addresses (type 1 announce / 3 fetch-request)
+  ? 4 => [* RangeFingerprint], ; ranges    Merkle range summary (type 2 recon, §5.6.3(a))
+  ? 5 => [* ClusterOp],        ; ops       CRDT metadata ops (§5.6.4)
+  ? 6 => [* JournalEntry],     ; journal   append-only hash-chained segment (type 4, §5.6.3(b))
+  ? 7 => [* StabilityMark],    ; stability per-device max-applied HLC (type 5, tombstone GC §5.6.5)
+}
+
+; One id-range and the sender's fingerprint over the ids it holds there. Self-verifying:
+; the receiver recomputes `fp` over ITS ids in [lo, hi) and compares (§5.6.3(a)).
+RangeFingerprint = {
+  1 => hash,   ; lo    inclusive low id bound of the range
+  2 => hash,   ; hi    exclusive high id bound
+  3 => u64,    ; count number of ids the sender holds in [lo, hi)
+  4 => hash,   ; fp    suite hash over the sender's SORTED ids in [lo, hi)
+}
+
+; Hybrid logical clock. Total order = lexicographic (wall, counter, device) (§5.6.4).
+HLC = { 1 => u64, 2 => u32, 3 => ik-pub }   ; wall(ms), counter, device_id
+
+; A unique OR-Set add-tag: which device added an element, and when (§5.6.4).
+AddTag = { 1 => ik-pub, 2 => HLC }
+
+; A CRDT metadata op. kind 1/2 = OR-Set add/remove (membership, folders, labels, deletes);
+; kind 3 = per-field LWW-Register write (read/unread, star, current folder), keyed by `hlc`.
+ClusterOp = {
+  1 => u8,           ; kind     1=set-add 2=set-remove 3=lww-set
+  2 => tstr,         ; target   object / folder / label id the op applies to
+  ? 3 => tstr,       ; field    LWW field name (kind 3), e.g. "read" / "folder" / "star"
+  ? 4 => ext-value,  ; value    LWW value (kind 3)
+  5 => HLC,          ; hlc      add-tag time (kind 1) / LWW key (kind 3) / remove time (kind 2)
+  ? 6 => [+ AddTag], ; observed add-tags this remove tombstones (kind 2)
+}
+
+; One append-only, hash-chained per-account journal entry (§5.6.3(b)).
+JournalEntry = { 1 => u64, 2 => hash, 3 => hash }   ; seq, prev(hash of prior entry), ref(object id or op hash)
+
+; A device's advertised stability point: the max HLC it has durably applied (tombstone GC, §5.6.5).
+StabilityMark = { 1 => ik-pub, 2 => HLC }           ; device, max-applied HLC
+```
+
+| Object | Field | Key | Type | Presence | Meaning & constraints |
+|--------|-------|----:|------|----------|-----------------------|
+| `ClusterSyncFrame` | `type` | 1 | `u8` | MUST | `1` announce new object ids, `2` recon (range summary), `3` fetch-request (pull ids), `4` journal segment, `5` stability marks. |
+| | `device` | 2 | `ik-pub` | MUST | Origin device key; MUST be a non-revoked cluster member (§5.6.1), else `0x0410` (FAIL_CLOSED_BLOCK). |
+| | `ids` | 3 | `[* hash]` | OPTIONAL | Content-addresses announced (type 1) or requested (type 3). |
+| | `ranges` | 4 | `[* RangeFingerprint]` | OPTIONAL | The reconciliation summary (type 2). A malformed summary, or a `fp` that does not recompute over the claimed range, ⇒ `ERR_CLUSTER_RECON_SUMMARY_INVALID` (`0x0411`, FAIL_CLOSED_BLOCK). |
+| | `ops` | 5 | `[* ClusterOp]` | OPTIONAL | CRDT metadata ops to merge (§5.6.4). |
+| | `journal` | 6 | `[* JournalEntry]` | OPTIONAL | Append-only journal segment for replay-backfill (type 4). A broken `prev` chain ⇒ `ERR_CLUSTER_JOURNAL_CHAIN_BROKEN` (`0x0412`, HALT_ALERT). |
+| | `stability` | 7 | `[* StabilityMark]` | OPTIONAL | Per-device max-applied HLC for the tombstone-GC stability cut (§5.6.5). |
+| `RangeFingerprint` | `lo`/`hi` | 1/2 | `hash` | MUST | Inclusive-low / exclusive-high id bounds of the range. |
+| | `count` | 3 | `u64` | MUST | Ids the sender holds in `[lo, hi)`. |
+| | `fp` | 4 | `hash` | MUST | Suite hash over the sender's **sorted** ids in `[lo, hi)`; the receiver recomputes and compares (§5.6.3(a)). |
+| `HLC` | `wall`/`counter`/`device` | 1/2/3 | `u64`/`u32`/`ik-pub` | MUST | Hybrid logical clock; total order lexicographic `(wall, counter, device)` (§5.6.4). A `wall` more than the skew bound (§16.10) ahead of the receiver ⇒ `ERR_CLUSTER_CRDT_OP_INVALID` (`0x0413`). |
+| `ClusterOp` | `kind` | 1 | `u8` | MUST | `1` set-add, `2` set-remove, `3` lww-set. An unknown kind ⇒ `0x0413`. |
+| | `target` | 2 | `tstr` | MUST | Object/folder/label id the op applies to. |
+| | `field`/`value` | 3/4 | `tstr`/`ext-value` | MUST **iff** `kind = 3` | The LWW field and its value. |
+| | `hlc` | 5 | `HLC` | MUST | The op's hybrid logical clock (add-tag time / LWW key / remove time). |
+| | `observed` | 6 | `[+ AddTag]` | MUST **iff** `kind = 2` | The add-tags this remove tombstones; a remove citing an unknown add-tag ⇒ `0x0413`. An op embedding a `DeniablePayload`/its plaintext (forbidden, §5.2.1) ⇒ `0x0413`. |
+| `JournalEntry` | `seq`/`prev`/`ref` | 1/2/3 | `u64`/`hash`/`hash` | MUST | Strictly-increasing seq; hash of the prior entry (genesis = all-zero v0-prefixed digest); the object id or op hash this entry records. |
+| `StabilityMark` | `device`/`hlc` | 1/2 | `ik-pub`/`HLC` | MUST | A device and the max HLC it has durably applied (§5.6.5). |
+
 ---
 
 ## 18.7 Auth-layer objects (§13)
@@ -1526,6 +1635,8 @@ every signature is over `DS-tag ‖ det_cbor(object∖sig)`, where:
 | `DeniablePrekeyBundle` | `spk_sig` (k4) | `DMTAP-v0/deniable-spk` | the raw `spk` bytes (field 3) (§18.9.10) |
 | `DeniablePrekeyBundle` / `DeniableInit` | `idk_sig` (k12) / `idk_a_cert` (k10) | `DMTAP-v0/deniable-idk` | the raw `idk` / `idk_a` bytes (§18.9.10) |
 | `DeniableInit`/`DeniableMessage`/`DeniablePayload` | — (none) | — | **no signature** — authenticated by the Double-Ratchet AEAD MAC (§18.9.10) |
+| `ClusterSyncFrame` / `ClusterOp` / `RangeFingerprint` / `JournalEntry` / `StabilityMark` | — (none) | — | **no DMTAP sig** — carried inside the encrypted, membership-authenticated **MLS cluster group** (§5.6.1, §18.6.3); the origin `device_id`'s non-revoked `DeviceCert` authenticates the sender (`0x0410`) and a `RangeFingerprint` is self-verifying by recomputation (§5.6.3(a)). Referenced objects (MOTEs/manifests) remain self-signed/content-addressed. |
+| `GatewayAliasMap` | — (none) | — | **no DMTAP sig** — gateway-local state, not mesh-transmitted (§18.3.12, §7.10) |
 
 For `Identity` (`sig` is a **list**, one entry per suite): the **same** preimage
 `DS-tag ‖ det_cbor(Identity ∖ {10})` is signed once per suite in `suites`, and the results are
@@ -1903,6 +2014,14 @@ Manifest = {
   1 => hash, 2 => u64, 3 => u32, 4 => [+ hash], 6 => suite,
 }
 
+; ── gateway alias mapping (§7.10) ──────────────────────────────────
+; Gateway-LOCAL state for the RANDOM alias mode; NOT mesh-transmitted, NO signature. The ENCODED
+; mode needs no row (the alias localpart.nativedomain@gw is a reversible transform, §7.10.2).
+GatewayAliasMap = {
+  1 => tstr, 2 => tstr, 3 => u8, ? 4 => tstr, 5 => ts, ? 6 => ts, ? 7 => bool,
+  ; 1=alias 2=native 3=mode(1 encoded/2 random) 4=correspondent 6=expires 7=burned
+}
+
 ; ── identity layer (§1) ────────────────────────────────────────────
 Identity = {
   1 => [+ u8], 2 => { + u8 => ik-pub }, 3 => u64,
@@ -1957,9 +2076,10 @@ DomainDirectory = {
   1 => suite, 2 => tstr, 3 => ik-pub, 4 => u64,
   5 => dir-visibility, 6 => [* DirEntry], ? 7 => hash, 8 => ts, 9 => sig-val,
 }
-DirEntry       = { 1 => tstr, 2 => ik-pub, 3 => hash, 4 => member-custody, ? 5 => [* tstr], 6 => ts }
+DirEntry       = { 1 => tstr, 2 => ik-pub, 3 => hash, 4 => member-custody, ? 5 => [* tstr], 6 => ts, ? 7 => alloc-tier }
 dir-visibility = "public" / "members-only"
 member-custody = "sovereign" / "org-managed"
+alloc-tier     = "random" / "vanity" / "byod"     ; provisioning tier disclosure (§3.11.2)
 
 ; Self-asserted, signed human display data (§3.9.5); a REPLACEABLE pointer, not an identity claim.
 ; sig (key 10) by IK or an IK-authorized device key (DMTAP-v0/profile). Avatar is owner-hosted;
@@ -2023,6 +2143,24 @@ role          = "owner" / "admin" / "member" / "poster" / "reader"
 GroupEvent = {
   1 => bytes, 2 => bytes, 3 => bytes, 4 => u64, 5 => hash, 6 => sig-val,
 }
+
+; ── device-cluster sync (§5.6) ─────────────────────────────────────
+; Carried INSIDE the encrypted MLS cluster group; NO DMTAP sig (MLS + DeviceCert authenticate,
+; §18.6.3). RangeFingerprint is self-verifying by recomputation. dir-visibility/alloc-tier above.
+ClusterSyncFrame = {
+  1 => u8, 2 => ik-pub, ? 3 => [* hash], ? 4 => [* RangeFingerprint],
+  ? 5 => [* ClusterOp], ? 6 => [* JournalEntry], ? 7 => [* StabilityMark],
+  ; 1=type(1 announce/2 recon/3 fetch/4 journal/5 stability) 2=device
+}
+RangeFingerprint = { 1 => hash, 2 => hash, 3 => u64, 4 => hash }   ; lo, hi(excl), count, fp(over sorted ids)
+HLC              = { 1 => u64, 2 => u32, 3 => ik-pub }             ; wall, counter, device — order (wall,counter,device)
+AddTag           = { 1 => ik-pub, 2 => HLC }                       ; OR-Set add-tag {device, hlc}
+ClusterOp = {
+  1 => u8, 2 => tstr, ? 3 => tstr, ? 4 => ext-value, 5 => HLC, ? 6 => [+ AddTag],
+  ; 1=kind(1 set-add/2 set-remove/3 lww-set) 2=target 3=field 4=value 5=hlc 6=observed add-tags(remove)
+}
+JournalEntry  = { 1 => u64, 2 => hash, 3 => hash }                 ; seq, prev, ref(object id or op hash)
+StabilityMark = { 1 => ik-pub, 2 => HLC }                          ; device, max-applied HLC
 
 ; ── auth layer (§13) ───────────────────────────────────────────────
 Challenge = {

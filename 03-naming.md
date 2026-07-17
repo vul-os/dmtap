@@ -458,12 +458,30 @@ to the same key — and support subaddressing:
   **also resolves to this same key** — i.e. the name points back. Before accepting a name
   (especially a **legacy alias**), the client MUST require **proof of control**: a DNS challenge
   under that name, or a **KT-anchored per-name record** binding `name → ik`. A name that does not
-  verify back MUST be rendered **as unverified**, never shown as an authenticated address. Given
-  that check, every *verified* alias resolves to the *same key*, so it cannot be used to
-  impersonate — authenticity is always the key, not the name. Adding/removing an alias is a signed
-  `Identity` version, audited via the same KT (§3.5). A legacy-alias's inbound mail is marked
-  *legacy-origin* (not E2E before the gateway, §7.2), so the user sees which messages came the old
-  way.
+  verify back MUST be rendered **as unverified**, never shown as an authenticated address, and MUST
+  NOT be used to address mail (`ERR_ALIAS_FORWARD_UNVERIFIED`, `0x011C`, FAIL_CLOSED_BLOCK — the
+  §3.9.4 rule for an identity's *own* self-asserted list, the analogue of the org-directory
+  forward-verify `0x0114`). Given that check, every *verified* alias resolves to the *same key*, so
+  it cannot be used to impersonate — authenticity is always the key, not the name. Adding/removing
+  an alias is a signed `Identity` version, audited via the same KT (§3.5). A legacy-alias's inbound
+  mail is marked *legacy-origin* (not E2E before the gateway, §7.2), so the user sees which messages
+  came the old way.
+- **Aliases in KT, and how a verifier resolves them to one identity (normative).** N addresses MAY
+  bind to one key. The KT/directory records this as **N independent `name → ik` leaves that share
+  the same `ik` and `identity_id`**: the KT leaf is `det_cbor([name, ik, version, identity_id])`
+  (§18.4.9), so a random-word-combo address, a vanity address, and a bring-your-own-domain address
+  on the **same key** are simply three leaves whose `ik`/`identity_id` are identical and whose
+  `name` differs. Each is **independently revocable**: revoking one publishes a newer signed
+  `Identity` dropping that `name` (and retires its DNS + KT binding), leaving the key and the other
+  aliases **untouched and still resolvable**. A verifier **resolves any alias to the same identity**
+  by the ordinary path (§3.3): resolve `name → ik`, verify the forward binding and KT inclusion,
+  then fetch the `Identity` by `identity_id`; because every verified alias yields the *same*
+  `identity_id`, two addresses that resolve to the same identity are recognized as **one person, one
+  key** (a client SHOULD coalesce them, and pinning is per-key, §3.4). A binding an owner has
+  **revoked** — present in a stale cache but retired in the current signed `Identity` / KT — MUST
+  NOT be used to address the identity (`ERR_ALIAS_REVOKED`, `0x011D`, REJECT_NOTIFY); the sender is
+  told to use a live alias or the key-name (§3.9.1), and the identity's *other* aliases are
+  unaffected.
 
 ### 3.9.5 `Profile` — human display data (self-asserted, signed)
 
@@ -676,3 +694,73 @@ Removing `alice@abc.com`:
 A domain-wide teardown (the org shuts down or changes providers) is the domain-authority analog of
 individual migration (§1.6): sovereign members keep their keys and re-bind their names elsewhere;
 only org-managed accounts depend on the org to move them.
+
+## 3.11 Address provisioning — tiers, aliases & delegation (normative)
+
+§3.8 gives the onboarding tiers and §3.9 the name forms; this section states the **address-allocation
+model** that sits on top of them plainly, because "who gives you a `name@domain`, and what happens
+if they stop" is the everyday question. The invariant throughout: **the KEY is the identity; a
+`name@domain` is a replaceable, KT-tamper-evident pointer to it (§3.9.1); the 8-word key-name
+(§3.9.1) is the zero-authority fallback that no provider can take away.**
+
+### 3.11.1 Two distinct roles (state it explicitly)
+
+The **naming / hosting provider** and the **legacy gateway** are **different roles**, and either
+can exist without the other:
+
+- **Naming / hosting provider** — a §3.10 **domain operator** that runs the domain's `_dmtap` DNS +
+  KT anchor (§3.2) and **allocates addresses to keys** (publishes `name → ik` bindings, §3.10.2),
+  and MAY host the mailbox/relay for those names. Its power is over **names**, never keys (§3.10.1).
+- **Legacy gateway** — the §7 SMTP bridge that translates between the mesh and legacy email. Its job
+  is **interop**, and it is content-visible on the legacy leg only (§7).
+
+**One operator MAY be both** (a provider that also runs a gateway for its domain), but a provider
+that allocates names needs **no** gateway (a pure-DMTAP domain, §7.7), and a gateway needs **not**
+allocate any name (it can bridge for a domain whose names another provider — or the user —
+publishes). Do not conflate them: the naming authority is §3.10.1; the gateway is §7.
+
+### 3.11.2 Provisioning tiers
+
+| Tier | What you get | Who runs DNS/KT | Squat resistance & cost | Residual |
+|:----:|--------------|-----------------|-------------------------|----------|
+| **0 — provider random word-combo** | an instant, free `random-words@provider` (e.g. `amber-quartz-owl@envoir.org`) | the provider (§3.10.1) | free/instant; **squat-resistant because the localpart is provider-assigned from a large word space**, not user-chosen | availability depends on the provider; the key + key-name are the escape hatch |
+| **1 — vanity reserved localpart** | a chosen `alice@provider` | the provider | a **fee** (or PoW) prices the scarcity of a short human localpart — the fee *is* the squat resistance | as tier 0 |
+| **2 — bring-your-own-domain** | `alice@abc.com` on a domain you control | **you** publish `_dmtap` (Tier C, §3.8); you **self-host** the mailbox **or delegate hosting** MX-style (§3.11.3) | you own the namespace; no provider can revoke it | the domain (registrar/DNS) can lapse or be seized — mitigated by KT + pinning + optional self-sovereign backend (§3.6) |
+| **3 — run your own provider / gateway** | you allocate names for yourself (and others) and/or run the §7 gateway | you | full sovereignty; you bear the operator cost (DNS, KT, IP reputation for the gateway) | none beyond your own operation |
+
+All four tiers are **KT-protected** (§3.5) and all resolve to the **same key model** — the tier
+changes *who publishes the pointer and who can revoke the name*, never what the key is or how
+authenticity is proved. A conformant client SHOULD default to tier 0/1 (§3.8 Tier B) and never
+require the user to author DNS.
+
+### 3.11.3 Aliases — many names, one key (normative)
+
+The directory/KT **MUST** allow **N addresses binding to one identity** (§3.9.4): a tier-0 random
+address for signups, a tier-1 vanity address for humans, and a tier-2 own-domain address can **all
+sit on one key at once**, each an independent `name → ik` leaf sharing that key's `identity_id`
+(§3.9.4, §18.4.9). Each alias is **independently revocable** without touching the others or the key.
+A verifier resolves **any** alias to the **same identity** by the §3.3 path — every verified alias
+yields the same `identity_id`, so the client recognizes one person / one key and pins per-key
+(§3.4). This is the mechanism behind "keep your old address while you migrate" (§3.9.4): a legacy
+address becomes one more alias, gateway-bridged (§7), on the same key.
+
+### 3.11.4 Delegation idiom — "my domain, someone else's servers"
+
+"My domain, someone else's servers" is **one address on your domain whose `_dmtap` record delegates
+hosting/relay to a provider** — `name@abc.com` where `abc.com`'s `_dmtap`/SVCB points hosting at the
+provider's node (MX-style delegation, exactly as Tier C delegates DKIM/MX to a gateway, §3.8, §7.3).
+It is **NOT** a two-domain address, and the address the user types stays `name@abc.com`. Two-domain
+forms are reserved for **§7 legacy bridging** (the gateway-alias `localpart.nativedomain@gateway`,
+§7.10) and for **genuine provider sub-namespaces** (a provider that intentionally issues
+`name@sub.provider`), never for expressing "hosted elsewhere" — delegation is a DNS pointer under
+*your* name, not a change of address.
+
+### 3.11.5 Honest residual
+
+A **provider-issued NAME's availability depends on that provider**: if it disappears or de-allocates
+the name, that *pointer* stops resolving. But the **KEY is unaffected**, every **other alias** on the
+key keeps working, and the name is **re-pointable** — you rebind it (or a new one) elsewhere and
+your pinned correspondents follow you by key (§1.6, §3.4). The **8-word key-name (§3.9.1) is the
+zero-authority escape hatch** that no provider gates. So the tiers trade convenience for
+provider-dependence **on the name only** — never on the identity, and never irreversibly. This is
+disclosed, not implied away (§6.6).

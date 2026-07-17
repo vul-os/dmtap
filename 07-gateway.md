@@ -262,3 +262,84 @@ DMTAP is explicit about who pays for what, and the provenance model (§7.8) make
   message's own `ProvenanceRecord` (§18.8.1, §7.8), not taken on trust. Conversely, a message the
   client shows as **pure-mesh** MUST NOT appear on a gateway bill. This closes the loop between the
   §12 billing seam and what the user can independently verify (§12.7).
+
+## 7.10 Native ↔ legacy address mapping (a swappable gateway alias, normative)
+
+A native DMTAP domain (`imran@mydomain.com` with a `_dmtap` record but **no legacy MX**) must still
+interoperate with legacy email (Gmail) through a gateway. The gateway is a **bridge, not an identity
+owner**: the **native address is the anchor**, the **gateway alias is a separate, rotatable pointer**,
+and the native mesh never touches a gateway (§7.7). This section specifies the address mapping in both
+directions and the two alias encodings.
+
+### 7.10.1 Native → legacy (why a reply-path rewrite is required)
+
+When a native user sends to a legacy recipient, the gateway MUST rewrite the **return / reply path**
+to a **legacy-routable gateway alias**, because **legacy email cannot route a reply to a non-MX native
+address**: a Gmail user replying to `imran@mydomain.com` would have its MTA look up `mydomain.com`'s
+MX, find none (native domains publish no MX), and bounce. So the machine `Reply-To:` / envelope-from
+MUST be the **gateway alias** (which *does* have an MX → the gateway); the display MAY still show the
+friendly native `imran@mydomain.com` (an RFC 5322 display-name/comment) for the human. A legacy reply
+then routes to the gateway, is mapped back to the native address (§7.10.3), converted to a MOTE, and
+delivered over the mesh.
+
+### 7.10.2 Two alias encodings (offer both — normative tradeoff)
+
+A gateway MUST support at least one and SHOULD offer both; the choice is disclosed to the user:
+
+| Encoding | Form | Gateway state | Privacy tradeoff |
+|----------|------|---------------|------------------|
+| **Encoded** | `localpart.nativedomain@gateway.domain` | **near-stateless** (self-describing; the alias *is* the mapping) | **reveals the native domain** to the legacy recipient |
+| **Random** | `<rand>@gateway.domain` + a gateway `GatewayAliasMap` (§18.3.12) | **stateful** (a per-alias table row) | **hides** the native address (Hide-My-Email-style); supports **per-correspondent, burnable** aliases |
+
+**Encoded local-part format (unambiguous, reversible, RFC 5321-valid).** Pack a native
+`localpart@nativedomain` into a **single** SMTP local-part by joining the two with a reserved
+separator and **escaping** any separator that occurs inside the parts:
+
+```
+encode(localpart, nativedomain):
+  esc(s) = replace every "-" with "--", then every "." with "-."   ; reversible escaping
+  local  = esc(localpart) ‖ "." ‖ esc(nativedomain)                ; "." at the TOP level is the sole join
+  alias  = local ‖ "@" ‖ gateway.domain
+decode(local):
+  split `local` at the single UNescaped top-level ".", un-escape each half → (localpart, nativedomain)
+```
+
+The escaping makes the top-level join `.` **the only unescaped `.`**, so decode is unambiguous and
+the round-trip is exact (`imran` + `mydomain.com` → `imran.mydomain-.com@gateway.domain` →
+`imran` + `mydomain.com`). The result MUST be RFC 5321-valid: the local-part MUST be ≤ 64 octets and
+the whole path ≤ 254 octets (§16.11); an over-length or non-decodable encoding MUST be rejected
+(`ERR_GATEWAY_ALIAS_ENCODING_INVALID`, `0x0606`, FAIL_CLOSED_BLOCK — the gateway MUST NOT **guess** a
+native address from an ambiguous local-part). A gateway MAY instead use a strict `base32`/`base64url`
+packing of `det_cbor([localpart, nativedomain])`; the escaping form above is the normative default so
+two gateways interoperate on encoded aliases.
+
+**Random form.** A `<rand>@gateway.domain` (a high-entropy localpart) is stored in a
+`GatewayAliasMap` row (§18.3.12) binding `alias → native`, OPTIONALLY scoped to one `correspondent`
+and **burnable** (a per-sender throwaway). It reveals nothing about the native domain, at the cost of
+gateway-held state and the availability of that mapping.
+
+### 7.10.3 Legacy → native
+
+The gateway MX receives at the alias, runs the **existing DKIM/SPF/DMARC** anti-spoof checks (§7.2),
+maps **alias → native** (decode the encoded form, or look up the `GatewayAliasMap` row; an
+unmapped/expired/burned random alias, or a non-decodable encoded one, fails
+`ERR_GATEWAY_ALIAS_UNMAPPED`, `0x0605`, RETURN_SENDER_SMTP `550 5.1.1` — "no such user," identical to
+the §21.9 non-existent-recipient reply, since the bridge owns no identity to defer to), converts the
+RFC 5322 message to a **signed MOTE**, stamps a gateway-touched `GatewayAttestation` /
+`ProvenanceRecord` (§7.2a, §7.8), and delivers to the mesh (§4) at the native key.
+
+### 7.10.4 Swappable / ephemeral, and the honest residual
+
+The gateway alias is **separate from identity**: it is **rotatable** (change or burn it with no effect
+on the native address or key), **non-permanent**, and **multi-gateway** (the native user MAY bridge
+through several gateways at once, each with its own aliases). The **native address is the anchor** —
+the thing that survives — exactly as the key is the anchor under the native address (§7.7 non-lock-in,
+zero-migration DKIM-delegation switch).
+
+**Residual (disclosed, §6.6).** The legacy leg is **plaintext at the legacy recipient and
+gateway-visible** — bridging to old email is **inherently non-private**: the gateway is the one
+component that is not content-blind (§7 preamble), the encoded form additionally discloses the native
+domain to the recipient, and a legacy MTA sees the mail in the clear. The **native mesh never touches a
+gateway** (a pure-mesh message is provably end-to-end, §7.8.1(b)), and every gateway-touched message is
+**marked** so the user sees which mail crossed the bridge (`ProvenanceRecord`, §8.6). DMTAP states this
+honestly rather than implying the bridge inherits mesh privacy.

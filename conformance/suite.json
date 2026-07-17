@@ -25,7 +25,7 @@
   "referenced_vectors_count": 32,
   "vectors_count_note": "vectors_count is the number of entries in vectors/vectors.json; referenced_vectors_count (32) is how many of them the byte-backed cases currently drive (several drive more than one case). The remaining 35 are pre-generated for construction-todo families not yet wired to a case.",
   "notes": [
-    "reject cases map to spec §21 (121-code registry); error_code + error_name + disposition (Action column) are normative.",
+    "reject cases map to spec §21 (129-code registry); error_code + error_name + disposition (Action column) are normative.",
     "self-contained CBOR reject cases assert a deterministic-CBOR (RFC 8949 §4.2 / §18.1.1) decoder rejects the given bytes.",
     "construction-todo cases are non-deterministic to seal (sealed Envelope/Payload) or belong to subsystems not yet vectored (README 'Coverage vs. deferred')."
   ],
@@ -2137,6 +2137,217 @@
         "error_code": "0x0312",
         "error_name": "ERR_PUSH_SUBSCRIPTION_SIG_INVALID",
         "action": "FAIL_CLOSED_BLOCK"
+      },
+      "status": "construction-todo"
+    },
+    {
+      "id": "DMTAP-SYNC-01",
+      "level": "Groups & Files",
+      "category": "SYNC",
+      "req": "MUST",
+      "clause": [
+        "§5.6.1",
+        "§18.6.3"
+      ],
+      "checks": "a ClusterSyncFrame/ClusterOp from a device whose DeviceCert is absent/invalid or revoked (KeyRotation-excluded) under the owner's IK is refused — replication is mutually authenticated",
+      "operation": "cluster_sync_validate",
+      "construction": "present a ClusterSyncFrame signed by a device that is not a non-revoked member of the identity's cluster",
+      "expect": {
+        "outcome": "reject",
+        "error_code": "0x0410",
+        "error_name": "ERR_CLUSTER_DEVICE_UNAUTHORIZED",
+        "action": "FAIL_CLOSED_BLOCK"
+      },
+      "status": "construction-todo"
+    },
+    {
+      "id": "DMTAP-SYNC-02",
+      "level": "Groups & Files",
+      "category": "SYNC",
+      "req": "MUST",
+      "clause": [
+        "§5.6.3(a)",
+        "§18.6.3"
+      ],
+      "checks": "a recon summary whose RangeFingerprint.fp does not recompute over the receiver's ids in [lo,hi) (forged Merkle fingerprint) is rejected and reconciliation re-driven",
+      "operation": "cluster_sync_validate",
+      "construction": "present a recon ClusterSyncFrame with a RangeFingerprint.fp that does not equal the hash of the receiver's sorted ids in the range",
+      "expect": {
+        "outcome": "reject",
+        "error_code": "0x0411",
+        "error_name": "ERR_CLUSTER_RECON_SUMMARY_INVALID",
+        "action": "FAIL_CLOSED_BLOCK"
+      },
+      "status": "construction-todo"
+    },
+    {
+      "id": "DMTAP-SYNC-03",
+      "level": "Groups & Files",
+      "category": "SYNC",
+      "req": "MUST",
+      "clause": [
+        "§5.6.3(b)",
+        "§18.6.3"
+      ],
+      "checks": "a journal-replay segment whose prev hash-chain does not verify (a fork/rewrite of the owner's own log) is halted on, analogous to a committer fork",
+      "operation": "cluster_sync_validate",
+      "construction": "present a journal ClusterSyncFrame whose JournalEntry.prev does not equal the hash of the prior entry",
+      "expect": {
+        "outcome": "reject",
+        "error_code": "0x0412",
+        "error_name": "ERR_CLUSTER_JOURNAL_CHAIN_BROKEN",
+        "action": "HALT_ALERT"
+      },
+      "status": "construction-todo"
+    },
+    {
+      "id": "DMTAP-SYNC-04",
+      "level": "Groups & Files",
+      "category": "SYNC",
+      "req": "MUST",
+      "clause": [
+        "§5.6.4",
+        "§16.10",
+        "§18.6.3"
+      ],
+      "checks": "a ClusterOp with an unknown kind, an OR-Set remove citing an unknown add-tag, an HLC wall beyond the skew bound, or embedding a DeniablePayload/its plaintext (§5.2.1) is rejected",
+      "operation": "cluster_sync_validate",
+      "construction": "present a ClusterOp with an HLC wall > skew bound ahead of the receiver (or embedding a DeniablePayload)",
+      "expect": {
+        "outcome": "reject",
+        "error_code": "0x0413",
+        "error_name": "ERR_CLUSTER_CRDT_OP_INVALID",
+        "action": "FAIL_CLOSED_BLOCK"
+      },
+      "status": "construction-todo"
+    },
+    {
+      "id": "DMTAP-SYNC-05",
+      "level": "Groups & Files",
+      "category": "SYNC",
+      "req": "MUST",
+      "clause": [
+        "§5.6.4"
+      ],
+      "checks": "convergence (strong eventual consistency): two replicas applying concurrent OR-Set add/remove + per-field LWW ops in any order reach the identical state — add-wins-over-unseen-remove; greater HLC (wall,counter,device) wins each field deterministically",
+      "operation": "cluster_crdt_merge",
+      "construction": "apply the same set of concurrent OR-Set and LWW ClusterOps in two different orders on two replicas; assert identical resulting state",
+      "expect": {
+        "outcome": "accept"
+      },
+      "status": "construction-todo"
+    },
+    {
+      "id": "DMTAP-ALIAS-01",
+      "level": "Core",
+      "category": "ALIAS",
+      "req": "MUST",
+      "clause": [
+        "§3.9.4",
+        "§3.11.3"
+      ],
+      "checks": "a name in the identity's own Identity.names whose forward name->ik binding (DNS+KT) resolves to a different key is rendered unverified and MUST NOT be displayed as authenticated nor used to address mail",
+      "operation": "alias_resolve",
+      "construction": "list a victim's address in Identity.names whose forward DNS+KT binding resolves to a different key",
+      "expect": {
+        "outcome": "reject",
+        "error_code": "0x011C",
+        "error_name": "ERR_ALIAS_FORWARD_UNVERIFIED",
+        "action": "FAIL_CLOSED_BLOCK"
+      },
+      "status": "construction-todo"
+    },
+    {
+      "id": "DMTAP-ALIAS-02",
+      "level": "Core",
+      "category": "ALIAS",
+      "req": "MUST",
+      "clause": [
+        "§3.9.4",
+        "§3.11.5"
+      ],
+      "checks": "a revoked alias (dropped in a newer signed Identity, its binding retired) used off a stale cache to address the identity is refused; the key and the identity's other aliases are unaffected",
+      "operation": "alias_resolve",
+      "construction": "address the identity via an alias removed in the current signed Identity version / retired in DNS+KT",
+      "expect": {
+        "outcome": "reject",
+        "error_code": "0x011D",
+        "error_name": "ERR_ALIAS_REVOKED",
+        "action": "REJECT_NOTIFY"
+      },
+      "status": "construction-todo"
+    },
+    {
+      "id": "DMTAP-ALIAS-03",
+      "level": "Core",
+      "category": "ALIAS",
+      "req": "MUST",
+      "clause": [
+        "§3.9.4",
+        "§3.11.3",
+        "§18.4.9"
+      ],
+      "checks": "multiple verified aliases (distinct name, same ik/identity_id) resolve to the same identity — recognized as one person/one key, pinned per-key",
+      "operation": "alias_resolve",
+      "construction": "resolve three verified aliases (random/vanity/byod) that share one ik/identity_id; assert all yield the same identity",
+      "expect": {
+        "outcome": "accept"
+      },
+      "status": "construction-todo"
+    },
+    {
+      "id": "DMTAP-GWALIAS-01",
+      "level": "Legacy",
+      "category": "GWALIAS",
+      "req": "MUST",
+      "clause": [
+        "§7.10.2",
+        "§18.3.12"
+      ],
+      "checks": "an encoded gateway alias localpart.nativedomain@gateway.domain that does not reversibly decode to exactly one (localpart, nativedomain) (ambiguous escaping) or exceeds RFC 5321 limits is rejected — the gateway MUST NOT guess a native address",
+      "operation": "gateway_alias_map",
+      "construction": "present an encoded alias local-part with ambiguous/illegal escaping or exceeding 64 octets",
+      "expect": {
+        "outcome": "reject",
+        "error_code": "0x0606",
+        "error_name": "ERR_GATEWAY_ALIAS_ENCODING_INVALID",
+        "action": "FAIL_CLOSED_BLOCK"
+      },
+      "status": "construction-todo"
+    },
+    {
+      "id": "DMTAP-GWALIAS-02",
+      "level": "Legacy",
+      "category": "GWALIAS",
+      "req": "MUST",
+      "clause": [
+        "§7.10.3",
+        "§18.3.12"
+      ],
+      "checks": "inbound legacy mail to a random-mode alias with no live GatewayAliasMap row (missing/expired/burned) is answered as 'no such user', not silently dropped",
+      "operation": "gateway_alias_map",
+      "construction": "deliver inbound legacy mail to a random gateway alias whose GatewayAliasMap row is absent/expired/burned",
+      "expect": {
+        "outcome": "reject",
+        "error_code": "0x0605",
+        "error_name": "ERR_GATEWAY_ALIAS_UNMAPPED",
+        "action": "RETURN_SENDER_SMTP"
+      },
+      "status": "construction-todo"
+    },
+    {
+      "id": "DMTAP-GWALIAS-03",
+      "level": "Legacy",
+      "category": "GWALIAS",
+      "req": "MUST",
+      "clause": [
+        "§7.10.2"
+      ],
+      "checks": "the encoded local-part round-trips: encode(localpart, nativedomain) (escape '-'->'--', '.'->'-.', join with a top-level '.') then decode yields the original (localpart, nativedomain) — deterministic KAT, e.g. imran+mydomain.com -> imran.mydomain-.com -> back",
+      "operation": "gateway_alias_encode",
+      "construction": "encode ('imran','mydomain.com') then decode; assert the pair round-trips exactly",
+      "expect": {
+        "outcome": "match"
       },
       "status": "construction-todo"
     }

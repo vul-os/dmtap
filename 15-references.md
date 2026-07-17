@@ -102,6 +102,11 @@ where DMTAP narrows or extends a referenced spec, the DMTAP text is normative fo
 | **Unger & Goldberg** (PETS 2015/2018) | Deniable Authenticated Key Exchange for secure messaging | deniability model precedent for the 1:1 mode (§5.2.1) |
 | **Android Key Attestation / Apple Secure Enclave / TPM 2.0 / FIDO** | hardware keystores + key attestation | non-exportable device keys and the `DeviceCert` attestation hook (§1.2a) |
 | **Signal Sesame** (2017) | multi-device session management | per-device-pair session fan-out for the deniable mode (§5.2.1(d)) |
+| **Shapiro, Preguiça, Baquero & Zawirski** (INRIA RR-7687, 2011) | Conflict-free Replicated Data Types (OR-Set, LWW-Register) | the concrete CRDT types + strong-eventual-consistency model for the device-cluster metadata merge (§5.6.4) |
+| **Kulkarni, Demirbas, Madappa, Avva & Leone** (2014) | Logical Physical Clocks / Hybrid Logical Clocks (HLC) | the `{wall, counter, device_id}` clock keying per-field LWW and its deterministic tiebreak (§5.6.4) |
+| **Auvolat & Taïani** (DAIS 2019) | Merkle Search Trees: efficient state-based CRDTs in open networks | prior art for the range-based Merkle summary used in device-cluster backfill (§5.6.3) |
+| **Meyer** (2023) | Range-Based Set Reconciliation | the drill-divergent-ranges / skip-matching-subtrees reconciliation exchange (§5.6.3) |
+| **Minsky & Trachtenberg** (CPISync; IEEE Trans. Inf. Theory 2003) | efficient set reconciliation | precedent for reconciling two sets by their differences, not full transfer (§5.6.3) |
 
 ## 15.6 On reproduction
 

@@ -45,9 +45,12 @@ and on `reject` MUST map it to the named §21 error code with that code's `Actio
 | **Core** — suite fail-closed (`SUITE`) | 6 | 6 | 0 | 0 |
 | **Core** — §2.7 validation pipeline (`VAL`) | 15 | 0 (2 reuse ADDR/PRE) | 0 | 15 |
 | **Core** — identity / KT / naming (`IDENT`) | 6 | 0 | 0 | 6 |
+| **Core** — aliases (`ALIAS`) | 3 | 0 | 0 | 3 |
 | **Private** (`PRIV`) | 7 | 0 | 0 | 7 |
 | **Groups & Files** (`GRP`, `FILE`) | 12 | 0 | 0 | 12 |
+| **Groups & Files** — device-cluster sync (`SYNC`) | 5 | 0 | 0 | 5 |
 | **Legacy** (`LEG`) | 2 | 0 | 0 | 2 |
+| **Legacy** — gateway alias mapping (`GWALIAS`) | 3 | 0 | 0 | 3 |
 | **Clients** (`CLI`) | 1 | 0 | 0 | 1 |
 | **Auth** (`AUTH`) | 5 | 0 | 0 | 5 |
 | **Private** — deniable 1:1 mode (`DENIABLE`) | 5 | 0 | 0 | 5 |
@@ -56,7 +59,7 @@ and on `reject` MUST map it to the named §21 error code with that code's `Actio
 | **Core** — device attestation (`ATTEST`) | 2 | 0 | 0 | 2 |
 | **Core** — profile / avatar (`PROFILE`) | 2 | 0 | 0 | 2 |
 | **Optional** — push wake-signaling (`PUSH`) | 2 | 0 | 0 | 2 |
-| **Total** | **109** | **33** | **6** | **70** |
+| **Total** | **120** | **33** | **6** | **81** |
 
 The 33 vectored + 6 self-contained cases (**39**) are fully machine-runnable **today** from
 `vectors.json` + the inline bytes here, with **no reference implementation required**. They pin the
@@ -69,8 +72,9 @@ identity/KT fail-closed, the higher levels, the wave-2 hardening families —
 wake-signaling guards, and the `FILE` durability guards `DMTAP-FILE-05`–`-09`); each becomes byte-backed
 when the corresponding subsystem gains a fixed-input KAT in `vectors.json` (see README "Coverage vs.
 deferred"). **Sync status:** `SUITE.md` and [`suite.json`](suite.json) are **in sync** — both carry
-the same **109** case ids (the wave-2 `DENIABLE`/`KTV1` families, the `PROFILE` cases, the
-optional `PUSH` cases, and the `FILE` durability cases are mirrored into `suite.json`). The changed deniable objects (§5.2.1 dedicated-`idk`) are still to be
+the same **120** case ids (the wave-2 `DENIABLE`/`KTV1` families, the `PROFILE` cases, the
+optional `PUSH` cases, the `FILE` durability cases, and the wave-3 `SYNC` (device-cluster),
+`ALIAS`, and `GWALIAS` families are mirrored into `suite.json`). The changed deniable objects (§5.2.1 dedicated-`idk`) are still to be
 re-vectored when the reference regenerates `vectors.json`.
 
 > All 39 byte-backed cases correspond one-for-one to entries in `vectors.json`
@@ -364,6 +368,48 @@ below are MUST.
 |----|-----|--------|--------|--------|--------|
 | DMTAP-PUSH-01 | MUST | §4.9.1, §18.5.6, §18.9.15 | a `WakePing` carrying any field beyond the opaque sealed token (key `1`) — or whose opened plaintext bears sender/subject/recipient/content — MUST be rejected: a wake is content-free and sender-blind | reject → `ERR_WAKEPING_CONTENT_PRESENT` (0x0313), FAIL_CLOSED_BLOCK | construction-todo |
 | DMTAP-PUSH-02 | MUST | §4.9.1, §4.9.4, §18.5.5, §18.9.15 | a `PushSubscription` whose `sig` does not verify under an `IK`-authorized `device_key` (§1.2) MUST be rejected and never woken against — the subscription must be authenticated to the identity | reject → `ERR_PUSH_SUBSCRIPTION_SIG_INVALID` (0x0312), FAIL_CLOSED_BLOCK | construction-todo |
+
+---
+
+## Device-cluster sync (§5.6) — `SYNC`
+
+Level **Groups & Files**. The personal-cluster convergence: mutual-auth membership (§5.6.1),
+range-based Merkle backfill + journal replay (§5.6.3), and the OR-Set / HLC-LWW CRDT merge
+(§5.6.4). Frames ride inside the encrypted MLS cluster group (§18.6.3); no byte-exact vectors yet.
+
+| id | req | clause | checks | expect | status |
+|----|-----|--------|--------|--------|--------|
+| DMTAP-SYNC-01 | MUST | §5.6.1, §18.6.3 | a `ClusterSyncFrame`/`ClusterOp` from a device whose `DeviceCert` is absent/invalid or **revoked** (KeyRotation-excluded) under the owner's `IK` is refused — replication is mutually authenticated, a non-member cannot inject or pull | reject → `ERR_CLUSTER_DEVICE_UNAUTHORIZED` (0x0410), FAIL_CLOSED_BLOCK | construction-todo |
+| DMTAP-SYNC-02 | MUST | §5.6.3(a), §18.6.3 | a `recon` summary whose `RangeFingerprint.fp` does not recompute over the receiver's ids in `[lo,hi)` (forged Merkle fingerprint) is rejected and reconciliation re-driven against another peer | reject → `ERR_CLUSTER_RECON_SUMMARY_INVALID` (0x0411), FAIL_CLOSED_BLOCK | construction-todo |
+| DMTAP-SYNC-03 | MUST | §5.6.3(b), §18.6.3 | a journal-replay segment whose `prev` hash-chain does not verify (a fork/rewrite of the owner's own log) is halted on, analogous to a committer fork | reject → `ERR_CLUSTER_JOURNAL_CHAIN_BROKEN` (0x0412), HALT_ALERT | construction-todo |
+| DMTAP-SYNC-04 | MUST | §5.6.4, §16.10, §18.6.3 | a `ClusterOp` with an unknown kind, an OR-Set remove citing an unknown add-tag, an HLC `wall` beyond the skew bound, or embedding a `DeniablePayload`/its plaintext (§5.2.1) is rejected | reject → `ERR_CLUSTER_CRDT_OP_INVALID` (0x0413), FAIL_CLOSED_BLOCK | construction-todo |
+| DMTAP-SYNC-05 | MUST | §5.6.4 | **convergence (SEC)**: two replicas applying concurrent OR-Set add/remove + per-field LWW ops in **any order** reach the **identical** state — add-wins-over-unseen-remove; the greater HLC `(wall,counter,device)` wins each field deterministically | accept (both replicas converge to the same state) | construction-todo |
+
+---
+
+## Aliases — many names, one key (§3.9.4, §3.11) — `ALIAS`
+
+Level **Core**. Self-asserted aliases require forward verification; each is independently
+revocable; every verified alias resolves to the same identity key.
+
+| id | req | clause | checks | expect | status |
+|----|-----|--------|--------|--------|--------|
+| DMTAP-ALIAS-01 | MUST | §3.9.4, §3.11.3 | a name in the identity's own `Identity.names` whose forward `name → ik` binding (DNS+KT) resolves to a **different** key is rendered unverified and MUST NOT be displayed as authenticated nor used to address mail | reject → `ERR_ALIAS_FORWARD_UNVERIFIED` (0x011C), FAIL_CLOSED_BLOCK | construction-todo |
+| DMTAP-ALIAS-02 | MUST | §3.9.4, §3.11.5 | a **revoked** alias (dropped in a newer signed `Identity`, its binding retired) used off a stale cache to address the identity is refused; the key and the identity's other aliases are unaffected | reject → `ERR_ALIAS_REVOKED` (0x011D), REJECT_NOTIFY | construction-todo |
+| DMTAP-ALIAS-03 | MUST | §3.9.4, §3.11.3, §18.4.9 | multiple **verified** aliases (distinct `name`, same `ik`/`identity_id`) resolve to the **same** identity — recognized as one person/one key, pinned per-key | accept (all aliases resolve to one identity_id) | construction-todo |
+
+---
+
+## Gateway alias mapping (§7.10) — `GWALIAS`
+
+Level **Legacy**. Native↔legacy bridging via a swappable gateway alias: reversible encoded
+local-parts, and legacy→native mapping that fails closed on an unmappable alias.
+
+| id | req | clause | checks | expect | status |
+|----|-----|--------|--------|--------|--------|
+| DMTAP-GWALIAS-01 | MUST | §7.10.2, §18.3.12 | an `encoded` gateway alias `localpart.nativedomain@gateway.domain` that does not reversibly decode to exactly one `(localpart, nativedomain)` (ambiguous escaping) or exceeds RFC 5321 limits (§16.11) is rejected — the gateway MUST NOT guess a native address | reject → `ERR_GATEWAY_ALIAS_ENCODING_INVALID` (0x0606), FAIL_CLOSED_BLOCK | construction-todo |
+| DMTAP-GWALIAS-02 | MUST | §7.10.3, §18.3.12 | inbound legacy mail to a `random`-mode alias with no live `GatewayAliasMap` row (missing/expired/burned) is answered as "no such user," not silently dropped | reject → `ERR_GATEWAY_ALIAS_UNMAPPED` (0x0605), RETURN_SENDER_SMTP (`550 5.1.1`) | construction-todo |
+| DMTAP-GWALIAS-03 | MUST | §7.10.2 | the encoded local-part **round-trips**: `encode(localpart, nativedomain)` (escape `-`→`--`, `.`→`-.`, join with a top-level `.`) then `decode` yields the original `(localpart, nativedomain)` — a deterministic KAT (e.g. `imran`+`mydomain.com` → `imran.mydomain-.com` → back) | match (decode(encode(x)) = x) | construction-todo |
 
 ---
 

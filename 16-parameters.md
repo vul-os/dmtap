@@ -33,6 +33,7 @@ above and for ordering hints.
 | DHT republish interval | 45 min | < TTL, with jitter |
 | DHT lookup redundancy (K) | 20 | store at K closest; S/Kademlia disjoint paths ≥ 3 |
 | Location seq-number | monotonic u64 | rollback defense; reject older-or-equal |
+| Max names per Identity (soft) | 32 | recommended cap on `Identity.names` aliases (§3.9.4, §3.11.3) to bound Identity size; tunable by policy, not a security gate |
 
 ## 16.3 Mixnet & privacy
 
@@ -144,6 +145,26 @@ above; inline/push/pull governs durability, mixnet/bulk governs metadata privacy
 | At-rest key relock timeout | ≤ 5 min inactivity (client policy) | evict the unlock-released at-rest key from memory after this idle period (§6.7); shorter on mobile |
 | `sensitive` message persistence | never written at rest | ephemeral-view only; MUST NOT be persisted by a compliant recipient (§6.7, §18.3.6) |
 | Device re-attestation cadence | ≤ 90 days (or the evidence's own expiry) | attestation-gated contexts treat older evidence as expired (`0x0118`) and require fresh evidence over the same non-exportable key (§1.2a, §18.4.2) |
+
+## 16.10 Device-cluster sync (§5.6)
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| Reconciliation range fan-out (`b`) | 16 | branching factor of the Merkle range summary; each divergent range re-splits into `b` sub-ranges (§5.6.3(a)) |
+| Reconciliation leaf threshold | ≤ 8 ids | drill until a divergent range holds ≤ this many ids, then enumerate them directly (§5.6.3(a)) |
+| HLC wall-clock skew bound | ±120 s (= §16.1) | an HLC `wall` more than the clock-skew tolerance ahead of the receiver is rejected (`0x0413`, §5.6.4) — a device cannot "win forever" |
+| Tombstone-retention floor | 30 days | minimum a delete tombstone / superseded LWW value is retained **after** the all-member stability cut before GC (§5.6.5); tolerates a briefly-offline device (mirrors requests-area retention §16.5) |
+| Cluster gossip / stability interval | ≤ 1 h | cadence of the periodic `ClusterSyncFrame` carrying `StabilityMark`s (max-applied HLC per device) for tombstone GC (§5.6.5) |
+| Cluster journal replay batch | ≤ 1024 entries / frame | append-only journal segment size per `ClusterSyncFrame` on replay-backfill (§5.6.3(b)) |
+| `cluster-replicated` default N | 3 (= §16.4) | eager chunk replicas across the box-cluster; tolerates N−1 holder loss (§5.5.2, §5.6.6) |
+
+## 16.11 Gateway alias mapping (§7.10)
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| Encoded-alias local-part max | 64 octets | RFC 5321 local-part limit; a longer encoded `localpart.nativedomain` alias is rejected (`0x0606`, §7.10.2) |
+| Gateway-alias full-path max | 254 octets | RFC 5321 path limit for the whole `alias@gateway.domain` (§7.10.2) |
+| Random-alias mapping TTL | indefinite (user-controlled) | a `GatewayAliasMap` row persists until the user burns/expires it; a gateway MAY set an unused-alias reap TTL by policy (§7.10.2, §18.3.12) |
 
 All numeric values here are v0 defaults; a future protocol version MAY revise them, and
 capability negotiation (§10.2) carries any non-default profile.

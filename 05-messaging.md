@@ -543,6 +543,145 @@ state, labels, and file index are replicated across devices as an **encrypted CR
 over the mesh, converging under out-of-order delivery. Any device can send/receive; the
 always-on box is the anchor that guarantees receipt while other devices sleep.
 
+A user who runs **multiple always-on nodes for redundancy** (a laptop + a home box + a VPS, say)
+needs all of them to converge on **every** mail, chat, and file — **live and historical** — with
+**no primary and no central server**. §5.6.1–§5.6.6 specify that convergence end-to-end:
+membership (§5.6.1), live replication (§5.6.2), historical backfill (§5.6.3), the CRDT merge
+semantics for mutable metadata (§5.6.4), tombstone GC (§5.6.5), and file redundancy (§5.6.6). The
+model is **strong eventual consistency** (Shapiro et al. CRDTs, §15.5): every device that has
+received the same set of operations is in the same state regardless of order, with **no
+coordination round and no leader**. All sync traffic rides **inside the devices' encrypted MLS
+cluster group**, so a relay carries only ciphertext and no non-member can read or inject it.
+
+### 5.6.1 Cluster membership (who is a replica) — normative
+
+The cluster is **exactly the identity's non-revoked devices** (§1.2): each is authenticated by a
+`DeviceCert` chaining to the root `IK`, and a device removed by a `KeyRotation` / revocation
+(§1.5, §6.7) is **excluded**. Replication is **mutually authenticated** (the normative rule): a
+device offering or requesting sync MUST present a `DeviceCert` that (a) verifies under the current
+`Identity`'s `IK` and (b) is **not** revoked in the pinned identity chain, and MUST verify the
+same of its peer before exchanging any object or op. A peer that cannot present such a cert — or
+presents a revoked one — is refused (`ERR_CLUSTER_DEVICE_UNAUTHORIZED`, `0x0410`,
+FAIL_CLOSED_BLOCK). Because the sync channel is the devices' **MLS cluster group**, membership
+changes are ordinary MLS Add/Remove Commits (§5.8.2): a removed device is cryptographically cut
+off from future epochs, and a joining device is admitted only via a Welcome authorized by an
+existing member. There is **no primary**; every member is an equal replica.
+
+### 5.6.2 Live replication (immutable objects gossip leaderless)
+
+New content-addressed, immutable, signed objects — MOTEs (§2), file manifests and chunks (§5.5) —
+are **gossiped leaderless** to every cluster member over the MLS cluster channel. Because each
+object is named by its **content address** (§18.9.4/§18.9.5), *"does peer P already hold object
+X?"* is a pure **id check**, and re-delivery of an already-held id is a no-op (dedup by content
+address, `STATUS_DUPLICATE_ID` `0x020E`, §2.6). A device pushes an object's id (a `ClusterSyncFrame`
+of type `announce`, §18.6.3); a peer lacking it pulls the bytes; a peer holding it ignores the
+offer. Ordering is irrelevant — an immutable object means the same thing whenever it arrives — so
+live replication needs no sequencing and no coordinator.
+
+### 5.6.3 Backfill (a joining or long-offline node catches up)
+
+A device that joins the cluster, or rejoins after being offline, MUST reconcile its object-id set
+against a peer's **without re-downloading everything**. DMTAP specifies two interoperable backfill
+methods; a device offers/accepts them via the `cluster-sync` capability (§10.2, §21.22).
+
+**(a) Range-based Merkle set-reconciliation (default).** The two devices reconcile their sets of
+object ids using a **Merkle summary over id-ranges** — the Merkle-search-tree / range-based
+set-reconciliation technique (Auvolat & Taïani; Meyer; Minsky–Trachtenberg, §15.5). Objects are
+ordered by content address, the id-space is split into ranges, and each range carries a
+**fingerprint** = the suite hash over the sorted ids it contains (`RangeFingerprint`, §18.6.3).
+The exchange:
+
+1. Each side sends a `ClusterSyncFrame` (§18.6.3) of type `recon` carrying a coarse summary — a
+   small set of top-level `RangeFingerprint`s spanning the whole id-space.
+2. For any range whose fingerprint **matches** on both sides, that entire subtree is **skipped**:
+   the two hold the identical ids there, *proven by one hash comparison*, with no further traffic.
+3. For any range whose fingerprint **differs**, the side **drills down** — it re-splits that range
+   into sub-ranges (fan-out `b`, §16.10) and exchanges their fingerprints, recursing until a
+   divergent range is small enough (≤ the reconciliation leaf threshold, §16.10) to **enumerate**
+   its ids directly.
+4. Each side then **fetches only the ids the other holds that it lacks** (§5.6.2 pull) — never the
+   matching bulk.
+
+The cost is **O(differences · log n)**, not O(n): matching subtrees are eliminated in a single
+hash comparison, so two nearly-identical replicas exchange a handful of frames. A
+`RangeFingerprint` is **self-verifying** — the receiver recomputes it over the ids it holds in the
+range — so a peer cannot forge a "we match" claim to suppress objects. A summary whose fingerprints
+do not recompute over the claimed range, or that is malformed, is rejected
+(`ERR_CLUSTER_RECON_SUMMARY_INVALID`, `0x0411`, FAIL_CLOSED_BLOCK) and reconciliation re-driven
+against another peer.
+
+**(b) Journal replay (alternative).** Each account additionally maintains an **append-only,
+hash-chained per-account journal**: an ordered log where each entry commits to the object id (or
+CRDT op, §5.6.4) it records and to the hash of the prior entry (`prev`) — exactly the append-only
+discipline of the committer log (§5.1) and KT log (§3.5). A rejoining device MAY instead **replay
+the journal from its last-seen entry**, applying each referenced object/op in order (a
+`ClusterSyncFrame` of type `journal`, §18.6.3). A journal whose `prev` chain does not verify (a
+fork or rewrite of the owner's *own* log) is rejected (`ERR_CLUSTER_JOURNAL_CHAIN_BROKEN`,
+`0x0412`, HALT_ALERT — the same fork-detection posture as a committer fork `0x0404`). Journal
+replay is simplest for a briefly-offline device; range reconciliation is cheaper for a device that
+is far behind or whose journal position is unknown. Both converge to the identical state — each is
+only a way to learn the missing ids/ops, fed into the same §5.6.2/§5.6.4 apply path.
+
+### 5.6.4 CRDT merge semantics for mutable metadata (normative)
+
+Immutable objects need no merge; **mutable metadata** — read/unread, folder/label membership,
+flags, moves, deletes — does. DMTAP fixes the **concrete CRDT types** so two implementations
+converge **byte-identically**:
+
+- **Object / folder / label membership** is an **Observed-Remove Set (OR-Set)** with tombstones
+  (Shapiro et al., §15.5). Each add carries a unique **add-tag** `{device_id, HLC}` (`AddTag`,
+  §18.6.3); a remove tombstones the specific add-tags it **observed**. An element is **present iff
+  it has at least one add-tag not covered by a tombstone** — so a concurrent add *wins over* a
+  remove that did not see it, and the result is order-independent.
+- **Per-field flags & moves** (read/unread, starred, the folder a message currently sits in) are a
+  **Last-Writer-Wins Register per field**, keyed by a **hybrid logical clock (HLC)** (Kulkarni et
+  al., §15.5): `HLC = {wall, counter, device_id}` (§18.6.3). The **winner of two concurrent writes
+  to one field is the one with the greater HLC, compared lexicographically as `(wall, counter,
+  device_id)`**: larger `wall` wins; ties broken by larger `counter`; any remaining tie broken by
+  the larger `device_id` bytes. This total order makes the tiebreak **deterministic on every
+  replica** — never a wall-clock coin-flip, never a lost update that two devices disagree about. An
+  HLC's `wall` MUST NOT be accepted more than the clock-skew tolerance (§16.1) ahead of the
+  receiver's clock; a far-future HLC (a device trying to "win forever") is rejected
+  (`ERR_CLUSTER_CRDT_OP_INVALID`, `0x0413`).
+- **Deletes** are OR-Set removes (tombstones), **not** destructive erasures: a delete on one device
+  and a concurrent flag-change on another converge without resurrecting or losing the object; a
+  "deleted" object is simply one whose add-tags are all tombstoned.
+
+All ops ride **inside the MLS cluster channel** (encrypted + authenticated to the cluster); each op
+names its origin `device_id`, and a receiver MUST confirm that device is a **non-revoked member**
+(§5.6.1) before applying it. A malformed op — unknown kind, an OR-Set remove citing an unknown
+add-tag, an out-of-skew HLC — or one that embeds a `DeniablePayload` or its plaintext (forbidden,
+§5.2.1) is rejected (`ERR_CLUSTER_CRDT_OP_INVALID`, `0x0413`, FAIL_CLOSED_BLOCK). Because OR-Set
+and LWW-Register are CRDTs, the merge is **associative, commutative, and idempotent** ⇒ strong
+eventual consistency with **no primary and no coordination**.
+
+### 5.6.5 Tombstone GC (when a delete may be reclaimed) — normative
+
+Tombstones cannot grow without bound. A delete tombstone (and a superseded LWW value) MAY be
+**reclaimed** only once it can no longer affect the merge: specifically, once **every current
+cluster member has acknowledged an HLC ≥ the tombstone's** — a *stability cut* proving every
+replica has observed the removal, so none still holds an un-tombstoned add-tag that could
+resurrect it — **and** a minimum **tombstone-retention floor** (§16.10) has elapsed to tolerate a
+briefly-offline device. Each device advertises the max HLC it has durably applied as a
+per-device **stability mark** in the periodic `ClusterSyncFrame` (`StabilityMark`, §18.6.3); any
+device computes the same cut from the same marks, so GC is **leaderless and deterministic**. A
+tombstone MUST NOT be GC'd before the stability cut — reclaiming it early could let a partitioned
+device's stale add resurrect a deleted object. GC is therefore safe, bounded, and coordination-free.
+
+### 5.6.6 Redundancy & files (cheap manifests, swarmed bytes)
+
+Across a redundancy cluster, **file manifests sync cheaply** (a manifest is a small
+content-addressed object, replicated like any other, §5.6.2) while **chunk bytes are
+swarm-fetched** (§5.5) from whichever member already holds them. A redundancy node SHOULD hold its
+files under the §5.5.2 **`cluster-replicated(N)`** durability class (default N = 3, §16.4), which
+**eagerly replicates** each chunk to N cluster members and **repairs** from any survivor (§5.5.3),
+so a file tolerates the loss of up to N−1 holders. The availability residual is stated honestly
+(§6.6): an object is **lost only if every replica holding it dies before it propagates** — a
+window that shrinks as N grows and as live replication (§5.6.2) completes, is **tunable** (N, and
+whether a class is best-effort `origin-hold` vs eager `cluster-replicated`), and is **disclosed**
+to the owner (§5.5.2, §6.6 item 10). Redundancy raises availability; it does not make loss
+impossible, and DMTAP says so rather than implying "your box cluster can never lose data."
+
 ## 5.7 Three products, shared components
 
 | Component | Mail | Chat | Files |
