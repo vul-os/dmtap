@@ -44,8 +44,8 @@ expected §21 error, and becomes byte-backed as its subsystem gains a fixed-inpu
 | **Core** | `CBOR`, `ADDR`, `SIG`, `PRE`, `NAME`, `SAFE`, `SUITE`, `VAL`, `IDENT`, `ORG`, `ATTEST`, `PROFILE` | Identity (§1), MOTE (§2), naming + TOFU + fail-closed KT + org administration + `Profile` display data (§3), delivery + `deliver`/`ack` (§4), MLS 1:1 (§5), cold-sender challenge gating (§9), device attestation (§1.2a) |
 | **Private** | `PRIV`, `DENIABLE`, `KTV1` (+ Core) | Core + mixnet + sealed sender + cover traffic + anti-active-adversary + fail-closed no-downgrade + privacy tiers (§4.4, §6); optional deniable 1:1 mode (§5.2.1) and KT-v1 hardening (§3.5.2) guards MUST hold when those modes are implemented. A production mail node MUST implement Private. |
 | **Groups & Files** | `GRP`, `FILE` (+ Core) | Core + MLS groups + content-addressed file transfer (§5) |
-| **Legacy** | `LEG` (+ Core) | Core + gateway inbound/outbound + DKIM delegation (§7) |
-| **Clients** | `CLI` (+ Core) | Core + JMAP; IMAP/POP/SMTP-submission compat RECOMMENDED (§8) |
+| **Legacy** | `LEG` (+ Core) | Core + gateway inbound/outbound + DKIM delegation (§7); gateway legacy-client surfaces (IMAP/POP/SMTP-submission, CalDAV/CardDAV) + reachability ingress + operator modes RECOMMENDED (§7.15) |
+| **Clients** | `CLI` (+ Core) | Core + **JMAP** — the node's native (and only) client surface (§8.1). Legacy client protocols (IMAP/POP/SMTP-submission, CalDAV/CardDAV) are a **gateway** capability (RECOMMENDED, §7.15), not a node one |
 | **Auth** | `AUTH` (+ Core) | Core + DMTAP-Auth login ceremony + origin binding + key-bound sessions (§13); OIDC bridge RECOMMENDED |
 
 ### Reference runner

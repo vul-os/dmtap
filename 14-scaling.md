@@ -82,8 +82,10 @@ push).
 
 ## 14.4 The always-on-box user
 
-The Pi/NAS/VPS is the **durable authority**: it holds the mailbox, terminates client protocols
-(JMAP/IMAP, §8), and participates in the mesh. The owner's phone/laptop are thin clients that
+The Pi/NAS/VPS is the **durable authority**: it holds the mailbox, serves its **native** client
+surface (JMAP, §8.1 — the node runs no legacy protocol server; IMAP and the other legacy surfaces
+live on the gateway, §7.15), and participates in the mesh. The owner's phone/laptop are thin
+clients that
 sync to it (§5.6 device cluster). Reachability (the box is usually NAT'd) comes from the relay
 layer (§14.5). Brief box downtime is covered by the same relay-mailbox/gateway short-queue
 buffer as §14.3; once the box returns and fetches, the durable copy lives on the box.

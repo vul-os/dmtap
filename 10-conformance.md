@@ -57,8 +57,8 @@ An implementation is **DMTAP-conformant** at a level if it passes the correspond
 | **Core** | Identity (§1), MOTE (§2), naming resolution + TOFU + **v0-minimal KT publish/verify with fail-closed-on-unreachable** (§3), mesh delivery + `deliver`/`ack` (§4), MLS 1:1 (§5), recipient policy incl. cold-sender challenge gating (§9) |
 | **Private** | Core + mixnet (Sphinx packet + directory + 3-hop stratified paths + key-epoch rotation, §4.4.1–§4.4.4) + sealed sender + cover traffic + the **anti-active-adversary mechanisms** (per-epoch replay caches, Poisson mixing, loop-cover attack detection, entry guards + operator diversity, and **fail-closed no-downgrade**, §4.4.6–§4.4.9) + privacy tiers (§4, §6). The user-selectable **high-security profile** (§4.4.10) and **PQ-Sphinx** (§4.4.12) are OPTIONAL. |
 | **Groups & Files** | Core + MLS groups + content-addressed file transfer (§5) |
-| **Legacy** | Core + gateway inbound/outbound + DKIM delegation (§7) |
-| **Clients** | Core + JMAP; IMAP/POP/SMTP-submission compat RECOMMENDED (§8) |
+| **Legacy** | Core + gateway inbound/outbound + DKIM delegation (§7); gateway legacy-client surfaces (IMAP/POP/SMTP-submission + CalDAV/CardDAV) + the reachability ingress + operator modes RECOMMENDED (§7.15) |
+| **Clients** | Core + **JMAP** — the node's native client surface (§8.1). Legacy client protocols (IMAP/POP/SMTP-submission, CalDAV/CardDAV) are a **gateway** capability (RECOMMENDED, §7.15), **not** a node one; a conformant node runs no legacy protocol server (§8) |
 | **Auth** | Core + DMTAP-Auth login ceremony with origin binding + key-bound sessions (§13); OIDC bridge RECOMMENDED (§13.6) |
 
 **Core is an interoperability floor, not a production target.** Because the standing default

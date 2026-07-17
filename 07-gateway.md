@@ -1,9 +1,25 @@
 # 7. The Legacy Gateway (optional)
 
-The gateway is the **only** component that speaks SMTP and the **only** one not content-blind
-(the legacy leg is unavoidably plaintext). It is **optional** — a node with no legacy
-correspondents never uses one, and at full DMTAP adoption it is unnecessary. It MAY be the node
+The gateway is the **sole home of every legacy protocol** and the **only** component not
+content-blind (the legacy leg is unavoidably plaintext). The **node is native-only** — it speaks
+**JMAP + the mesh** and runs **no** legacy protocol server (§8) — so all legacy surfaces live
+here:
+
+- **SMTP MX / relay** — interop to and from the outside email world (§7.2, §7.3);
+- **IMAP, POP3, SMTP-submission** — legacy mail-client access (§7.15, §8.2);
+- **CalDAV / CardDAV** — legacy calendar/contact-client access (§7.15, §8.4);
+- the **legacy-client reachability ingress** — the SNI-passthrough / stream routing that accepts
+  a raw legacy connection (e.g. an iPhone Mail app) and serves its mailbox (§7.15).
+
+It is **optional** — a node with no legacy correspondents and only native (JMAP) clients never
+uses one, and at full DMTAP adoption it is unnecessary and MAY be deprecated. It MAY be the node
 binary run in `--gateway` mode by an operator with a reputable IP and a domain.
+
+**Two different "relays," kept distinct.** The gateway's legacy-client reachability ingress
+(§7.15) serves clients that **cannot** speak the mesh; it is a legacy edge surface. It is **not**
+the node's native mesh relay (Circuit Relay v2 / DCUtR, §4.3), which is node↔node reachability
+and lives on the node. Native nodes reach each other peer-to-peer over the mesh with no gateway
+in the path (§7.7); the gateway ingress exists **only** for legacy clients.
 
 ## 7.1 Responsibilities
 
@@ -556,3 +572,89 @@ two seams**, the *only* operator-specific surfaces:
 Both seams are **out of scope for interop** (§7.13): two independent operators need not agree on prices,
 quotas, or plans to interoperate, and a user MAY switch operators — or self-host — **without changing
 identity or keys**. DMTAP specifies the **seam shape**, never a company, a price, or a plan.
+
+## 7.15 Legacy client access and the reachability ingress (normative)
+
+The node is native-only (§8): it serves **JMAP** over the mesh and runs no legacy protocol
+server. Every legacy client surface — and the ingress that carries a legacy client to it — is a
+**gateway** surface, specified here. This is the counterpart to §7.2/§7.3 (which bridge the
+outside *email world*): §7.15 serves the user's own **legacy client apps** (Apple Mail, Outlook,
+Thunderbird, DAVx⁵, old iPhones) that cannot speak JMAP + the mesh.
+
+### 7.15.1 The legacy surfaces the gateway serves
+
+A gateway serving legacy clients MUST project the identity's one MOTE store through the requested
+legacy protocol, decrypting as required (§7.15.3):
+
+- **IMAP (RFC 9051 / 3501)** and **POP3 (RFC 1939)** — read access, projecting MOTEs as
+  folders/flags (IMAP) or a maildrop (POP3).
+- **SMTP-submission (RFC 6409)** — outbound: the gateway converts the submitted RFC 5322 message
+  to a MOTE for a native destination, or bridges it to legacy via §7.3.
+- **CalDAV (RFC 4791)** and **CardDAV (RFC 6352)** — projecting JSCalendar/JSContact MOTEs as
+  iCalendar (RFC 5545) / vCard (RFC 6350) for legacy calendar/contact clients (§8.4).
+
+**Auth = app-passwords.** The gateway issues app-specific passwords mapped to the identity, so a
+legacy client authenticates without ever touching the keypair; revoking an app-password revokes
+that client. These are the **only** legacy client surfaces; the node exposes **none** of them.
+
+### 7.15.2 The legacy-client reachability ingress
+
+A legacy client opens a raw protocol/TLS connection (e.g. IMAPS on 993, SMTPS on 465) to a
+hostname. Because nodes have no static IP and legacy clients cannot speak the mesh, the gateway
+provides the **reachability ingress**: it accepts the inbound legacy connection (routing by SNI /
+stream to the right mailbox), **terminates TLS**, and speaks the legacy protocol against the
+mailbox.
+
+- This ingress is a **gateway** surface. It MUST NOT be confused with the node's **native mesh
+  relay** (Circuit Relay v2 / DCUtR, §4.3): the mesh relay carries **ciphertext-only, content-blind**
+  node↔node traffic and never speaks a legacy protocol, whereas the legacy ingress terminates a
+  cleartext-capable legacy session and therefore sees plaintext (§7.15.3).
+- The gateway MAY reach the backing mailbox over the mesh to a native node, but the **legacy
+  protocol is terminated at the gateway**, not at the node.
+
+### 7.15.3 Honest-privacy consequence (normative)
+
+To speak IMAP/POP3/SMTP-submission/CalDAV/CardDAV, a gateway **MUST decrypt** the mailbox — the
+legacy protocols have no notion of the DMTAP object encryption. Therefore:
+
+- A legacy client's mail (and calendar/contacts) is **visible in the clear to whatever gateway
+  serves it**. A gateway serving legacy clients is **not** content-blind for those clients.
+- A **private** gateway (§7.15.4, the user's own) means **zero third party** sees it — the
+  operator is the user. A **public** (or other third-party) gateway is a **deliberate trust
+  decision**, equivalent to choosing Gmail: that operator can read the mail it serves.
+- This is **unlike** the node's native path. JMAP + the mesh (§8.1) is **zero-access /
+  zero-intermediary**: no gateway is in the path and nothing is decrypted by a third party. A
+  client MUST NOT present gateway-served legacy access as end-to-end when served by a non-private
+  gateway, and SHOULD surface which gateway (and thus which trust boundary) serves a legacy
+  session.
+
+This supersedes any earlier framing that treated legacy client access as node-local and therefore
+"between parties, not you and your own device." That rationale held only while IMAP was node-local;
+now that legacy is gateway-served, DMTAP states honestly that a non-private gateway is an
+intermediary that can read the mail.
+
+### 7.15.4 Operator modes (normative)
+
+A gateway operator **MUST** declare, and MAY enforce, one of three service modes for legacy
+client access; the mode is disclosed to users (and advertised in the directory descriptor, §7.5):
+
+| Mode | Who it serves | Trust profile |
+|------|---------------|---------------|
+| **public** | open registration — any user MAY obtain legacy access | the operator can read the mail of every user it serves; users accept it like a public mail provider |
+| **registered-clients-only** | only identities the operator has an established registration relationship with (§7.12) | same read-access for those users; not open to strangers |
+| **private** | a single user — the operator themselves (own gateway) | **zero third party**: the only party that can read the mail is the user, because the user *is* the operator |
+
+- The **private** mode is the honest-privacy-preserving option: run your own gateway
+  (`--gateway`, §7) for your own legacy clients and no external party ever decrypts your mail.
+- **public** and **registered-clients-only** are the same honest trust trade as choosing any
+  hosted mail provider — normatively **disclosed** (§7.15.3), never presented as zero-access.
+- The mode governs **legacy client access only**; it is orthogonal to the SMTP bridge's
+  inbound/outbound anti-abuse floor (§7.11) and to the metering seams (§7.14).
+
+### 7.15.5 Optional and deprecatable
+
+Like the SMTP bridge, the legacy client surfaces are **OPTIONAL** and **deprecatable**: they
+exist to onboard clients that cannot yet speak JMAP + the mesh, and they **fade as native
+adoption grows**. A node with only native (JMAP) clients needs no gateway at all. Legacy client
+support is **not required for node conformance**; it is a RECOMMENDED **gateway** capability for
+adoption (§10).

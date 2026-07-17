@@ -91,6 +91,14 @@ As IPv6 spreads, rungs 1–2 dominate and the relay role fades. Downtime is cove
 sender-retry (§2.6) and optional **peer buffering** (buddy nodes hold ciphertext during an
 outage) — no central buffer required.
 
+> **This ladder is the node's NATIVE, node↔node reachability** — it carries ciphertext-only,
+> content-blind mesh traffic between DMTAP nodes and never speaks a legacy protocol. It is
+> **distinct** from the **legacy-client reachability ingress** on the **gateway** (§7.15,
+> §8.2), which accepts a raw legacy connection (e.g. an iPhone Mail app over IMAP/TLS) and
+> **terminates** it. The Circuit Relay v2 role here (rung 3) is the NATIVE mesh relay and stays
+> on the node; the legacy ingress is a gateway edge surface for clients that cannot speak the
+> mesh. Do not conflate the two "relays."
+
 ## 4.4 The mixnet (metadata privacy)
 
 The `private` tier (the production default for all mail and every control MOTE, §4.6, §10.3) is a

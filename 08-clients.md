@@ -1,10 +1,20 @@
 # 8. Client Access
 
-The node is a multi-protocol front-end over one MOTE store. Every protocol is a *view* of the
-same mailbox. Client-facing protocols terminate **on the node**; the node is reached through
-the mesh (SNI/stream routing over the relay/mesh) so no static IP is needed.
+The node is **native-only**. It exposes exactly one client surface — **JMAP** (§8.1) — as a
+*view* over its one MOTE store, reached over the native **mesh** (§4) so no static IP is needed.
+The node runs **no legacy protocol server**. Every legacy surface — IMAP, POP3,
+SMTP-submission, SMTP MX/relay, CalDAV, and CardDAV — lives **only on the gateway** (§7), which
+is the sole home of all legacy protocols and the sole legacy-client reachability ingress. This
+draws a clean line: **native client sync = JMAP on the node; legacy client access = the gateway**.
 
-## 8.1 JMAP (native)
+> **Two different "relays" — do not conflate them.** The **native mesh relay** (Circuit
+> Relay v2 / DCUtR, §4.3) is node↔node reachability: nodes work together peer-to-peer, and it
+> **stays on the node** — it is native, not legacy. The **legacy-client reachability ingress**
+> (the SNI-passthrough / stream routing that accepts a raw IMAP/TLS connection from, e.g., an
+> iPhone Mail app and serves its mailbox) lives **only on the gateway** (§7.15); it exists
+> solely to serve clients that cannot speak the mesh.
+
+## 8.1 JMAP (native — the node's only client surface)
 
 - The node exposes **JMAP** (RFC 8620 / RFC 8621) over a local HTTP endpoint (and, for remote
   devices, over an authenticated mesh stream).
@@ -13,24 +23,33 @@ the mesh (SNI/stream routing over the relay/mesh) so no static IP is needed.
 - New DMTAP-native clients SHOULD prefer JMAP + the native MOTE/MLS APIs, which expose DMTAP-only
   features (identity verification, postage, privacy tier, file manifests).
 
-## 8.2 IMAP / POP / SMTP-submission (compatibility)
+## 8.2 IMAP / POP / SMTP-submission (legacy — served by the gateway, not the node)
 
-To let existing mail clients (Apple Mail, Outlook, Thunderbird, mutt) work unchanged:
+Existing mail clients (Apple Mail, Outlook, Thunderbird, mutt) that cannot speak JMAP + the mesh
+are served by a **gateway**, never by the node. The node runs **no** IMAP/POP/SMTP-submission
+server; the legacy surfaces and their reachability ingress are specified normatively in §7.15:
 
-- The node runs **IMAP**, **POP3**, and **SMTP-submission** servers locally, projecting the
-  MOTE store as folders/flags and accepting outbound submissions.
-- Reached through the mesh (SNI-passthrough / stream routing); the node terminates TLS and
-  speaks the legacy protocol; the relay/mesh never decrypts.
-- **Auth = app-passwords**: the node issues app-specific passwords mapped to the identity, so
+- The **gateway** runs **IMAP**, **POP3**, and **SMTP-submission** servers, projecting the
+  mailbox as folders/flags and accepting outbound submissions on the client's behalf.
+- The gateway is reached over the **legacy-client reachability ingress** (SNI-passthrough /
+  stream routing, §7.15) — a raw IMAP/TLS connection from the client arrives at the gateway,
+  which terminates TLS and speaks the legacy protocol. This is a **gateway** surface; it is
+  **distinct** from the node's native mesh relay (§4.3), which never speaks a legacy protocol.
+- **Auth = app-passwords**: the gateway issues app-specific passwords mapped to the identity, so
   legacy clients authenticate without touching the keypair.
-- **Encryption is transparent to the owner's own client**: the node decrypts MOTEs and presents
-  normal RFC 5322/MIME to the authenticated client. The E2E boundary is between *parties*, not
-  between the owner and their own device.
-- Outbound submission → the node converts to a MOTE (native) or routes to a gateway (legacy
-  destination).
+- **Honest-privacy consequence (normative).** To speak IMAP/POP the gateway MUST **decrypt** the
+  mailbox — so a legacy client's mail is **visible to whatever gateway serves it**. A **private**
+  gateway (your own, §7.15.2) is a **zero-third-party** arrangement; a **public** gateway is a
+  **deliberate trust decision** (like choosing Gmail) in which that operator can read the mail.
+  This is unlike the node's native path: JMAP + the mesh (§8.1) remain **zero-access /
+  zero-intermediary**. A client MUST NOT present gateway-served legacy access as end-to-end when
+  a non-private gateway serves it.
+- Outbound submission → the gateway converts to a MOTE (native destination) or bridges to legacy
+  (§7.3).
 
-Compatibility support MAY be deprecated over time (like SMTP) as native clients mature; it is
-not required for conformance, but is RECOMMENDED for adoption.
+Legacy support is a **gateway** capability that MAY be deprecated over time (like SMTP) as native
+JMAP clients mature; it is not required for node conformance, and it is a RECOMMENDED **gateway**
+capability for adoption (§10, §7.15).
 
 ## 8.3 Multi-device
 
@@ -43,30 +62,40 @@ anchors receipt while other devices sleep.
 Calendar and contacts are **not** separate central services — they are additional **MOTE kinds**
 stored in the same node, end-to-end encrypted, synced across the device cluster (§5.6), and
 shared/invited via the same MLS groups (§5) as everything else. They inherit the full
-decentralized model: your node holds them, no provider can read them, and there is no central
-CalDAV/CardDAV server.
+decentralized model: your node holds them, no provider can read them, and — on the native path —
+there is no central server.
 
-- **Native:** calendar events and contacts are represented as **JSCalendar (RFC 8984)** and
-  **JSContact (RFC 9553)** MOTEs, synced via **JMAP** (Calendars/Contacts) alongside mail (§8.1).
-  Calendar invitations and scheduling (iTIP-style) ride as MOTEs between participants — no
-  central scheduling server; free/busy and RSVP are messages, not a server query.
-- **Compatibility:** the node exposes **CalDAV (RFC 4791)** and **CardDAV (RFC 6352)** servers on
-  `localhost`/over the mesh, projecting the calendar/contact MOTE store as iCalendar (RFC 5545)
-  and vCard (RFC 6350) so existing clients (Apple Calendar/Contacts, Thunderbird, DAVx⁵) work
-  unchanged — reached through the mesh with app-passwords, exactly like IMAP (§8.2).
+- **Native (on the node):** calendar events and contacts are represented as **JSCalendar (RFC
+  8984)** and **JSContact (RFC 9553)** MOTEs, synced via **JMAP** (Calendars/Contacts) alongside
+  mail (§8.1). This is the node's native surface and **stays on the node**. Calendar invitations
+  and scheduling (iTIP-style) ride as MOTEs between participants — no central scheduling server;
+  free/busy and RSVP are messages, not a server query.
+- **Legacy (on the gateway):** **CalDAV (RFC 4791)** and **CardDAV (RFC 6352)** are **gateway**
+  surfaces (§7.15), never node surfaces. The gateway projects the calendar/contact MOTE store as
+  iCalendar (RFC 5545) and vCard (RFC 6350) so existing clients (Apple Calendar/Contacts,
+  Thunderbird, DAVx⁵) work unchanged — reached over the legacy-client ingress with app-passwords,
+  exactly like IMAP (§8.2). The same honest-privacy consequence applies: to serve CalDAV/CardDAV
+  the gateway MUST decrypt, so a non-private gateway serving DAV can read the calendar/contacts;
+  the native JMAP path (above) is zero-access.
 
-Compatibility DAV surfaces MAY be deprecated over time like the mail ones; native JMAP + MOTE is
-the forward path.
+The legacy DAV surfaces are **gateway** capabilities that MAY be deprecated over time like the
+mail ones; native JMAP + MOTE on the node is the forward path.
 
 ## 8.5 The decentralization invariant (all data classes)
 
 Every data class DMTAP carries — **mail, chat, files, calendar, contacts, identity, and login
-(§13)** — obeys the same rule: it lives on the **user's node**, is **end-to-end encrypted**,
-syncs across the user's **device cluster**, shares via the same **MLS groups**, and routes over
-the same **mesh/mixnet** — with **no central server** for any of it. Legacy protocols
-(IMAP/POP/SMTP/CalDAV/CardDAV) and the OIDC bridge (§13.6) are **edge-compat surfaces only**;
-they never become a central store or a required intermediary. The node is the authority for
-*everything*, uniformly. There is no data class that quietly depends on a central service.
+(§13)** — obeys the same rule on its **native** path: it lives on the **user's node**, is
+**end-to-end encrypted**, syncs across the user's **device cluster** via **JMAP** (the node's
+only client surface, §8.1), shares via the same **MLS groups**, and routes over the same
+**mesh/mixnet** — with **no central server** for any of it. The node runs **native surfaces only
+(JMAP + the mesh)** and **no legacy protocol server** of any kind. Legacy protocols
+(IMAP/POP/SMTP/CalDAV/CardDAV) live **only on the gateway** (§7.15) as **edge surfaces**, and the
+OIDC bridge (§13.6) is likewise an edge-compat surface; none of them is a node surface, and on
+the native path none becomes a central store or a required intermediary. A legacy client reached
+through a **non-private gateway** is served by an intermediary that can read the mail — that is a
+deliberate, disclosed trust choice (§8.2, §7.15.3), not a native property. The node is the
+authority for *everything*, uniformly, over its native surfaces. There is no data class that
+quietly depends on a central service on the native path.
 
 Silent grants that would **redirect or delegate** that data — **auto-forward rules**, new
 **capability delegations** (§13.5), and new **RP-session authorizations** (§13.4) — MUST be

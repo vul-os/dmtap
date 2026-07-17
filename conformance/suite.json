@@ -1652,9 +1652,9 @@
       "category": "CLI",
       "req": "MUST",
       "clause": [
-        "§8"
+        "§8.1"
       ],
-      "checks": "a MOTE renders to/from the JMAP object model without loss of the §8-required fields",
+      "checks": "a MOTE renders to/from the native JMAP object model (the node's only client surface) without loss of the §8-required fields",
       "operation": "jmap_roundtrip",
       "construction": "MOTE <-> JMAP mapping of a fixed mail MOTE",
       "expect": {

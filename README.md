@@ -90,8 +90,12 @@ flowchart LR
   G <--> GW <--> D
 ```
 
-Existing clients work too: the node speaks **IMAP / SMTP-submission / POP3 / JMAP** with
-autodiscovery, so Apple Mail, Outlook, Thunderbird, even old iPhones configure themselves (§8).
+Existing clients work too — through the **gateway**, not the node. The **node is native-only**:
+it speaks **JMAP** (§8.1). The **gateway** speaks the legacy protocols — **IMAP / POP3 /
+SMTP-submission / CalDAV / CardDAV** — with autodiscovery, so Apple Mail, Outlook, Thunderbird,
+even old iPhones configure themselves (§7.15, §8.2). A gateway must decrypt to speak legacy, so a
+non-private gateway can read that mail — run your own (private mode) for zero third parties; the
+native JMAP path stays zero-access (§7.15.3).
 
 ---
 
@@ -104,7 +108,7 @@ autodiscovery, so Apple Mail, Outlook, Thunderbird, even old iPhones configure t
 | **End-to-end encrypted** | MLS (RFC 9420) for all sessions/groups; HPKE (RFC 9180) for sealing (§2, §5) |
 | **Metadata-private** | Sealed sender + mixnet + cover traffic vs a global *passive* adversary (§6) |
 | **Continuity** | Redundant, rotatable recovery; migrate your human name without losing contacts (§1.4–1.6) |
-| **Legacy-compatible** | SMTP gateway + IMAP/JMAP client surface, both directions (§7, §8) |
+| **Legacy-compatible** | **Gateway** bridges SMTP both directions and serves legacy clients (IMAP/POP/DAV); the node stays native (JMAP) (§7, §7.15, §8) |
 | **Decentralized login** | The same key signs into apps — WebAuthn-bound, key-bound sessions, OIDC bridge (§13) |
 | **Post-quantum ready** | Per-object algorithm agility; PQ suites (X-Wing / ML-KEM / ML-DSA) slot in with no name change (§1) |
 | **Org & domain admin** | Own `@company.com` → provision users (sovereign *or* disclosed-managed), directory, groups, roles (§3.10) |
@@ -119,7 +123,8 @@ The novelty is the *composition and transport*, not new primitives. DMTAP profil
 | Sealing | **HPKE** (RFC 9180), X25519 · ChaCha20-Poly1305 |
 | Signatures / hashing | **Ed25519** (RFC 8032) · **BLAKE3** |
 | Wire format | Deterministic **CBOR** (RFC 8949 §4.2), COSE/CWT-style integer keys |
-| Client sync & legacy | **JMAP** (8620/8621) · IMAP4rev2 (9051) · SMTP submission (6409) · CalDAV/CardDAV |
+| Client sync (node, native) | **JMAP** (8620/8621) |
+| Legacy clients (gateway only) | IMAP4rev2 (9051) · POP3 (1939) · SMTP submission (6409) · CalDAV/CardDAV |
 | Mesh transport | **libp2p** (Kademlia · Circuit Relay v2 · DCUtR) |
 | Metadata privacy | **Sphinx / Loopix** mix format |
 | Trust / anti-equivocation | **Key Transparency** (CONIKS / IETF keytrans style) |
@@ -171,8 +176,8 @@ reference code. Where the reference and the spec disagree, **the spec wins**. By
 | 4 | [`04-transport.md`](04-transport.md) | Mesh (libp2p), mixnet, sealed sender, cover traffic, reachability, bulk transfer |
 | 5 | [`05-messaging.md`](05-messaging.md) | MLS everywhere, 1:1/chat/groups/files, KeyPackage async join, the committer |
 | 6 | [`06-privacy.md`](06-privacy.md) | Threat model, metadata-privacy guarantees, privacy tiers, honest limits |
-| 7 | [`07-gateway.md`](07-gateway.md) | Legacy SMTP bridge: inbound, outbound, DKIM delegation, attestation |
-| 8 | [`08-clients.md`](08-clients.md) | JMAP native; IMAP / POP / SMTP-submission compatibility; autodiscovery |
+| 7 | [`07-gateway.md`](07-gateway.md) | Sole home of all legacy: SMTP bridge (in/out, DKIM, attestation) + legacy-client surfaces (IMAP/POP/DAV) + reachability ingress + operator modes |
+| 8 | [`08-clients.md`](08-clients.md) | Node native-only: JMAP is the node's only client surface; legacy client protocols are gateway-served (§7.15) |
 | 9 | [`09-anti-abuse.md`](09-anti-abuse.md) | Anonymous rate-limit tokens, proof-of-work, postage, recipient policy |
 | 10 | [`10-conformance.md`](10-conformance.md) | Versioning, capability negotiation, conformance levels, governance |
 | 11 | [`11-grounding-and-references.md`](11-grounding-and-references.md) | Verified standards, corrections, honest limits, bibliography |

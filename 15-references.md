@@ -48,13 +48,13 @@ where DMTAP narrows or extends a referenced spec, the DMTAP text is normative fo
 | **RFC 5321** | Simple Mail Transfer Protocol (SMTP) | gateway ↔ legacy world; MX priority/randomization §5.1 (§7, §14) |
 | **RFC 5322** | Internet Message Format | RFC822 ⇄ MOTE translation at the gateway (§7) |
 | **RFC 2045–2049** | MIME | attachment/body representation across the legacy boundary (§7) |
-| **RFC 9051** | IMAP4rev2 | client-compat surface projected from the MOTE store (§8) |
-| **RFC 3501** | IMAP4rev1 | broader legacy-client compatibility (§8) |
-| **RFC 6409** | Message Submission (port 587) | client outbound submission (§8) |
-| **RFC 1939** | POP3 | optional legacy-client compatibility (§8) |
-| **RFC 8620 / 8621** | JMAP (Core / Mail) | native modern client sync surface (§8) |
-| **RFC 4791** | Calendaring Extensions to WebDAV (CalDAV) | legacy calendar-client compat, projected from calendar MOTEs (§8.4) |
-| **RFC 6352** | vCard Extensions to WebDAV (CardDAV) | legacy contacts-client compat, projected from contact MOTEs (§8.4) |
+| **RFC 9051** | IMAP4rev2 | **gateway** legacy-client compat surface, projected from the MOTE store (§7.15, §8.2) |
+| **RFC 3501** | IMAP4rev1 | broader **gateway** legacy-client compat (§7.15, §8.2) |
+| **RFC 6409** | Message Submission (port 587) | **gateway** legacy-client outbound submission (§7.15, §8.2) |
+| **RFC 1939** | POP3 | optional **gateway** legacy-client compat (§7.15, §8.2) |
+| **RFC 8620 / 8621** | JMAP (Core / Mail) | the **node's native** modern client sync surface — the node's only client surface (§8.1) |
+| **RFC 4791** | Calendaring Extensions to WebDAV (CalDAV) | **gateway** legacy calendar-client compat, projected from calendar MOTEs (§7.15, §8.4) |
+| **RFC 6352** | vCard Extensions to WebDAV (CardDAV) | **gateway** legacy contacts-client compat, projected from contact MOTEs (§7.15, §8.4) |
 | **RFC 5545** | iCalendar | calendar object body format (§8.4) |
 | **RFC 6350** | vCard 4.0 | contact object body format (§8.4) |
 | **RFC 8984 / 9553** | JSCalendar / JSContact | native JSON calendar/contact representation (§8.4) |

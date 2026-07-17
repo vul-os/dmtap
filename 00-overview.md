@@ -42,7 +42,9 @@ and does **all the real work**:
 - Mesh participation: peer discovery (DHT), relaying for others, delivery (§4).
 - Mixnet client: onion-wrapping, cover traffic, sealed sender (§4, §6).
 - Messaging: MLS groups for 1:1, chat, and file folders; MLS KeyPackages (§5.3).
-- Client access: JMAP native, plus IMAP/POP/SMTP-submission compatibility (§8).
+- Client access: **JMAP** (native — the node's only client surface, §8). Legacy client
+  protocols (IMAP/POP/SMTP-submission, CalDAV/CardDAV) are served by the **gateway**, not the
+  node (§7, §8.2).
 - The outbound **retry queue** — durability lives here, not in the middle.
 
 A node MAY additionally run in **relay mode** (help NAT'd peers, if it has a public
@@ -51,13 +53,18 @@ separate programs.
 
 ### The Gateway (`gateway/`) — optional
 
-The **only** component that speaks SMTP and the **only** one that is not content-blind
-(the legacy leg is unavoidably plaintext). It:
+The **sole home of every legacy protocol** and the **only** component that is not content-blind
+(the legacy leg is unavoidably plaintext). Because the node is native-only (JMAP + mesh, §8), the
+gateway runs all of: **SMTP MX/relay**, **IMAP/POP3/SMTP-submission**, **CalDAV/CardDAV**, and
+the **legacy-client reachability ingress** (§7.15). It:
 
 - receives inbound legacy mail (acts as MX), wraps it into a MOTE, attests it, and delivers
   into the mesh; returns SMTP `4xx` if the recipient is offline so the *sending* server
   retries;
 - sends outbound legacy mail, DKIM-signing as the user's domain via delegated selectors;
+- serves the user's own **legacy client apps** (IMAP/POP/DAV) over the reachability ingress —
+  which requires decrypting the mailbox, so a non-private gateway can read it (an honest,
+  disclosed trust choice, §7.15.3); the native JMAP path stays zero-access;
 - carries the operational weight the system cannot avoid: **IP reputation**.
 
 A node without legacy correspondents never invokes a gateway. At full adoption, the

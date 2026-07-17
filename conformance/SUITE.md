@@ -269,11 +269,13 @@ Core + gateway inbound/outbound + DKIM delegation.
 
 ## Clients level (§8)
 
-Core + JMAP; IMAP/POP/SMTP-submission compat RECOMMENDED.
+Core + **JMAP**, the node's native (and only) client surface (§8.1). Legacy client protocols
+(IMAP/POP/SMTP-submission, CalDAV/CardDAV) are a **gateway** capability (RECOMMENDED, §7.15), not
+a node one.
 
 | id | req | clause | checks | expect | status |
 |----|-----|--------|--------|--------|--------|
-| DMTAP-CLI-01 | MUST | §8 | a MOTE renders to/from the JMAP object model without loss of the fields §8 requires | accept (round-trip) | construction-todo |
+| DMTAP-CLI-01 | MUST | §8.1 | a MOTE renders to/from the native JMAP object model without loss of the fields §8 requires | accept (round-trip) | construction-todo |
 
 ---
 
