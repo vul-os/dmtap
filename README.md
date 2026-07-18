@@ -52,7 +52,7 @@ flowchart TD
   SUB --> MAIL["📬 Mail"]
   SUB --> CHAT["💬 Chat & groups"]
   SUB --> FILES["📁 Files"]
-  SUB --> LOGIN["🔓 Web login<br/>“Sign in with Envoir”"]
+  SUB --> LOGIN["🔓 Web login<br/>“Sign in with your key”"]
 ```
 
 ## How a message moves
@@ -138,7 +138,7 @@ else points at an existing spec.
 
 ## Names: one identity, many pointers
 
-- **`name@domain`** — the everyday address (provider-issued like `you@envoir.org`, or your own
+- **`name@domain`** — the everyday address (provider-issued like `you@provider.example`, or your own
   domain). Human, familiar, interoperates with legacy email.
 - **the key** — the real, durable identity underneath. Names point to it; it survives name changes
   and key rotation.
@@ -155,11 +155,10 @@ This repo is the **protocol specification** — the neutral, open standard, and 
 |---|---|---|
 | **DMTAP** | The protocol (this repo) | open standard |
 | **MOTE** | The message object (signed · encrypted · content-addressed) | §2 |
-| **Envoir** | Reference implementation + apps (node, gateway, clients) | open source, MIT |
-| **Envoir Cloud** | Optional hosted operator (a thin billing layer; never gates privacy) | private |
+| **Implementations** | Independent implementations, apps, and optional hosted operators | external — none required or endorsed here |
 
-> DMTAP is to Envoir what Matrix is to Element, or JMAP is to Fastmail: an open standard with an
-> independent reference implementation and an optional hosted service — none required to speak it.
+> DMTAP is an open standard in the way Matrix or JMAP are: implementations and hosted services
+> exist around it, but none is part of the standard and none is required to speak it.
 
 ## The specification
 
@@ -259,5 +258,5 @@ DMTAP states what it *cannot* do rather than overclaim:
 
 ## License
 
-The specification is open (see the repository license). The Envoir reference implementation is
-MIT-licensed. The protocol is free for anyone to implement; no permission required.
+The specification is open (see the repository license). The protocol is free for anyone to
+implement; no permission required.
