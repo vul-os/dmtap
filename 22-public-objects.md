@@ -305,6 +305,14 @@ FeedHead = {
 | | `signer` | 7 | `ik-pub` | MUST | Operational key; authorized by `pub` via `DeviceCert` (§1.2), checked as in §22.3.3 step 4. |
 | | `sig` | 8 | `sig-val` | MUST | Signature by `signer` over `DMTAP-PUB-v0/feed ‖ 0x00 ‖ det_cbor(FeedHead ∖ {8})`. Failure ⇒ `ERR_PUB_FEED_SIG_INVALID` (`0x0906`). |
 
+**`FeedEntry` content address (normative).** A `FeedEntry` carries no signature of its own; the
+content address that names it — the value carried in a successor's `prev` and in `FeedHead.tip` —
+is derived from the complete object by the generic §18.9.4 anchor rule:
+`entry_id = 0x1e ‖ BLAKE3-256( det_cbor(FeedEntry) )`, with **no** DS-tag fold (contrast the
+signed objects above, whose DS-tags separate *signing preimages*; an unsigned entry's authenticity
+flows solely from the signed head's transitive `tip` commitment, §22.4.1). *(Made explicit here
+because conformance-vector work showed it was previously only inferable.)*
+
 ### 22.4.2 Anti-rollback (the standard monotonic-`seq` rule)
 
 A feed's `seq` obeys the **identical anti-rollback rule** the spec applies everywhere a monotonic
