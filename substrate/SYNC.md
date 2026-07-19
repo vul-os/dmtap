@@ -408,6 +408,33 @@ GET  /sync/state/<root>          → det_cbor(ObservableState)                  
   hash / `hlc`), verifying signature (§4.1) and CRDT validity (§4) before apply, and returns the count of
   **newly** applied ops. Apply is idempotent: a re-pushed op is a no-op (matching flowstock's
   `INSERT OR IGNORE` oplog-dedup).
+- **Op framing inside a collection (normative, frozen — `SYNC-OP-02`).** Wherever ops cross a wire as a
+  collection — `pull`'s `ops` array (§5.2.1 key `1`), `POST /sync/ops`'s `ops` array, and a `fingerprint`
+  drill-down's `ops` array (§5.3) — each member is the `COSE_Sign1` (or `SyncFrame`) **as a CBOR item,
+  embedded directly in the array**. It is **NOT** wrapped in a `bstr`: the array element is the
+  four-element `COSE_Sign1` array itself (`[protected, unprotected, payload, signature]`, §4.1), so a
+  decoder sees `[[h'…', {}, h'…', h'…'], …]`, never `[h'82…', …]`. A `bstr`-wrapped member is malformed
+  (`ERR_SYNC_OP_INVALID`, `0x0A03`); this is a MUST, in both directions, because a receiver cannot
+  reliably tell the two framings apart from bytes alone and a mismatched pair fails as an opaque decode
+  error at the worst moment.
+  - **Why item-embedded, not `bstr`-wrapped.** The usual reason to `bstr`-wrap a nested object is to
+    preserve its exact bytes across a re-encode, because something is hashed or verified over them. Here
+    that reason does not apply: **every byte that is hashed or verified is already inside a `bstr`**. The
+    signature preimage is the §4.1 `Sig_structure` built from the `protected` and `payload` `bstr`s; the
+    `op-id` (§4.1) is computed over `det_cbor(SyncOp)` — the `payload` `bstr`'s contents. Nothing is
+    computed over the *outer* `COSE_Sign1` encoding, so wrapping it would buy no integrity property and
+    would instead add a second encoding layer, a second length prefix per op, and a second place for an
+    encoder to disagree. Item-embedding also keeps the response **uniformly deterministic CBOR** (§2.2)
+    and validatable as a single tree, rather than a tree of opaque blobs whose interiors a validator must
+    re-enter to check canonicity. It is what RFC 9052 does natively (a `COSE_Sign1` is an item, not a
+    blob), and it matches this document's own seam, visible in §5.2.1's `FastJoin`: **signed structures
+    ship as items** (key `1`, the `Snapshot`), **opaque hash-addressed bodies ship as `bstr`** (key `3`,
+    the `ObservableState`). An op is a signed structure, so it ships as an item.
+  - **Discriminating the union.** Both members of `COSE_Sign1(SyncOp) | SyncFrame` are §4.1 `COSE_Sign1`
+    arrays — per-op signing signs a `SyncOp`, frame signing signs a frame head — so the *outer* shape is
+    uniform by construction and a receiver MUST discriminate on the decoded `payload`, never on the
+    element's framing. This is the second reason a `bstr` wrap earns nothing: it cannot serve as the
+    discriminator either.
 - **A round is symmetric** (push-then-pull), so only one side of a pair need be reachable and ops relay
   transitively through any topology (hub-and-spoke, mesh, chain) — the flowstock property. Fetching is
   **read-only and content-addressable at the op level**, so responses are cacheable and a lying responder
@@ -446,6 +473,10 @@ FastJoin = {
 }
 ```
 
+Key `1`'s members are framed per §5.2's **op-framing** rule: each `COSE_Sign1`/`SyncFrame` is embedded as
+a **CBOR item**, never `bstr`-wrapped. Key `3` is the one `bstr` here, and deliberately so — it is an
+opaque, hash-addressed body, not a signed structure (§5.2's seam).
+
 The two keys are **mutually exclusive** — a response carrying both, or neither, is malformed (`0x0A03`). A
 responder that never truncates never emits key `2`, so the baseline is unchanged for every replica that
 keeps a complete journal.
@@ -480,10 +511,9 @@ keeps a complete journal.
 1. **Verify the snapshot** under §6.1 — signature (DS-tag `DMTAP-SYNC-v0/snapshot`) and signer admission
    (§9) — and check `Snapshot.ns` is a namespace it subscribes to (§7); otherwise `0x0A02`/`0x0A01`/
    `0x0A0A`. An unverifiable snapshot is discarded; the caller does **not** fall back to the suffix.
-2. **Check the snapshot covers what it is missing** — `Snapshot.covers` MUST dominate every HLC the
-   caller's own vector lacks *and* the responder's `floor` MUST NOT exceed `covers`. A `fast-join` whose
-   snapshot does not cover the gap it was sent to close is `0x0A09`: it would leave the same hole it was
-   meant to fill.
+2. **Check what is checkable about `covers` and `floor`** — per §5.2.2, which states exactly which
+   part of "the snapshot covers what I am missing" a caller can verify and which part it must trust.
+   `covers` MUST be a well-formed, non-empty §5.1 `VersionVector`; a malformed one is `0x0A03`.
 3. **Obtain and verify the state body** — key `3` if present and hashing to `root`, else
    `GET /sync/state/<root>` from the responder or any holder — recompute
    `0x1e ‖ BLAKE3-256("DMTAP-SYNC-v0/snapshot-state" ‖ 0x00 ‖ det_cbor(ObservableState))` and require it to
@@ -495,7 +525,60 @@ keeps a complete journal.
    backfill-and-recompute obligation.
 5. **Continue pulling above the floor** — re-issue `POST /sync/pull` with the new vector (`covers`), which
    is now at or above the responder's floor, and the ordinary `ops` answer completes the join. Fast-join
-   replaces the *truncated prefix*, never the suffix.
+   replaces the *truncated prefix*, never the suffix. **Fast-join MUST make progress:** if that re-pull
+   is answered with another `fast-join` carrying the same `Snapshot.root` and `covers`, the responder is
+   looping and the caller MUST fail the round `0x0A09` rather than re-adopt. This is the one loop a
+   below-floor caller can otherwise spin in forever.
+
+### 5.2.2 The floor/`covers` relationship — what a caller verifies, what it trusts (normative)
+
+`floor` and `covers` are **different kinds of object**, and the single most likely implementation error
+here is to compare them as if they were the same kind:
+
+- **`floor` is one `Hlc`** — a single point in the §3 total order, below which the responder retains no
+  ops. Its `author` field is the tiebreaker component of *that one timestamp*; it is **not** a claim about
+  that author's stream.
+- **`covers` is a per-author `VersionVector`** — a high-water mark per author, saying what the snapshot
+  folded in.
+
+Consequently **there is no well-defined ordering between them**, and this document deliberately states
+**no** "`floor` MUST NOT exceed `covers`" rule: the comparison is a category error, not a rule an
+implementation failed to find. In particular, the natural-looking predicate `covers.lacks(floor)` — "does
+the covers vector lack the floor HLC?" — is **wrong**, and returns `true` for a perfectly well-formed
+fast-join. `SYNC-FJ-01`'s own frozen data is the counterexample: `floor` = `(W,5,A)` while `covers` =
+`{A@(W,4), B@(W,7)}`, so `covers[A]` sits *below* the floor HLC — simply because author `A` produced no
+op between `(W,4)` and the cut. Nothing was lost; nothing is wrong; a caller applying that check would
+reject a conformant responder. An implementation that writes this check will pass its own unit tests and
+fail against real peers, which is exactly how it reaches production.
+
+**What the caller can verify (MUST):** the snapshot's signature and signer admission (§6.1/§9), that
+`Snapshot.ns` is a namespace it subscribes to, that `covers` is a well-formed non-empty `VersionVector`,
+that the state body hashes to `Snapshot.root`, and that the fast-join **makes progress** (step 5). These
+are all local, byte-level checks over material the responder actually handed it.
+
+**What the caller MAY additionally check (a consistency signal, not a MUST):** that `covers` carries a
+mark for `floor.author`. A responder that truncated below `(W,5,A)` will in the ordinary case have folded
+some op of `A`'s into the snapshot that replaced the prefix, so an absent mark is worth logging. It is
+**not** a MUST because it is not entailed: if `A`'s only op is *at* the floor, that op is retained rather
+than truncated and `covers` need never name `A` at all. A conformance failure must not be inferred from
+it.
+
+**What the caller must simply trust:** that **every op the responder truncated was folded into `covers`**.
+That is a statement quantified over ops the caller **cannot see** — they are precisely the ops that no
+longer exist at the responder — so no comparison of `floor`, `covers` and the caller's own vector can
+establish it, and no amount of care at the caller can substitute. The obligation lives at the **responder**
+(§6.2: "the snapshot MUST account for every op dropped", and truncation is refused whole rather than
+performed partially), and its residual is governed by the §6.1 snapshot **trust policy** — a
+verify-required deployment's later backfill-and-recompute of `root` is what eventually detects a responder
+that truncated more than its snapshot covered. Saying so plainly is better than a check that looks like
+proof and is not.
+
+**Adopting `covers` may move the caller's vector backwards for some author, and that is intended.** The
+caller sets its vector to `covers` (step 4); where it already held a *later* HLC from some author, that
+entry regresses. It is not a rollback and MUST NOT be treated as an error: step 5's re-pull re-ships every
+retained op above `covers`, including those. What a caller MUST do is ensure ops it holds that the
+responder does **not** hold are pushed (`POST /sync/ops`) — the symmetric push-then-pull round of §5.2 —
+since those are the only ops a fast-join can actually lose.
 
 The §6.1 snapshot semantics (root determinism, `SYNC-SNAP-02`'s fast-join-equals-replay guarantee, the
 trust policy and its residual) govern throughout and are **not** restated here; §5.2.1 specifies only how
@@ -667,6 +750,16 @@ advanced past them**, so no future op can depend on them:
   or that simply never advanced) is served by **§5.2.1 fast-join**, which is what makes truncation safe
   rather than merely permitted: the peer recovers via the snapshot, and the responder is forbidden from
   answering it with a bare suffix.
+- **The floor is not comparable to `covers`, and the accounting obligation is not a comparison.** The
+  floor is a single `Hlc` (a point in the §3 total order); `covers` is a per-author `VersionVector`. "The
+  snapshot accounts for every op dropped" is a statement quantified over **ops**, not a relation between
+  those two objects, and it is **not** expressible as any ordering test between them — a snapshot may
+  legitimately have `covers[a]` *below* the floor for an author `a` that produced nothing in that window
+  (`SYNC-FJ-01`'s frozen data is exactly this shape). The obligation is discharged **here**, at the
+  truncating replica, which can enumerate the ops it is about to drop; it is **not** re-checkable by the
+  peer that receives the fast-join, which by construction cannot see them. §5.2.2 states the peer-side
+  half — what a caller verifies and what it trusts — and exists because the natural-looking peer-side
+  check is wrong.
 
 ---
 
@@ -747,7 +840,7 @@ throwaway-script provenance model as [`pub_vectors.json`](../conformance/vectors
 value is a direct, mechanical application of §3/§4/§5/§6/§7 to fixed inputs, no randomness — Ed25519 is
 deterministic, so even the one signature vector is a reproducible known answer. An **independent Rust
 implementation** of this document now exists and executes these vectors; it is what surfaced the §14
-corrections C-01…C-05, and the vectors below are the ones it must reproduce byte-for-byte. Generation
+corrections C-01…C-07, and the vectors below are the ones it must reproduce byte-for-byte. Generation
 stays in the script, so the vectors remain an independent check on any implementation rather than a
 restatement of one.
 
@@ -764,6 +857,14 @@ and the below-floor MUST NOT were decided in §5.2.1 first, with the inline-vs-b
 reasoned there, and only then vectored. They exist because an implementation hit a *hole* rather than a
 contradiction — §5.2 had no way to express an answer §6.2 requires — which is the case a vector suite is
 least likely to catch on its own, since there was no wrong answer to disagree with, only a missing one.
+
+They were tightened again by **C-06/C-07**, and the lesson is worth stating where the vectors are defined:
+`SYNC-FJ-02`'s `ops` member was originally a bare `SyncOp` **stand-in** rather than a real `COSE_Sign1`,
+which is why it could not settle the op-framing ambiguity (C-06) that §5.2's prose also left open. A vector
+whose artifact does not have the shape the specification requires cannot discharge the specification's
+ambiguity — it merely looks like it does. The `ops` responses here now carry real `COSE_Sign1` envelopes,
+item-embedded per §5.2, and `SYNC-FJ-02` additionally freezes the `floor`/`covers` **non**-relationship
+(§5.2.2) together with the naive predicate it rejects.
 
 | # | Name | Construction | Expected | Status |
 |---|------|--------------|----------|--------|
@@ -784,7 +885,7 @@ least likely to catch on its own, since there was no wrong answer to disagree wi
 | `SYNC-SNAP-01` | Snapshot root determinism | two replicas at the same `covers` vector | identical `root`; mismatch ⇒ `0x0A09` | **Frozen** — `sync_snapshot_root_determinism`. §6.1.1 now pins the canonical `ObservableState`: a fixed six-element positional array (one section per CRDT kind, `orset`/`lww`/`pn`/`death`/`rga`/`tree`), each a section sorted by `det_cbor` of its entries (RGA inner order is sequence order, not re-sorted), and `root = 0x1e ‖ BLAKE3-256("DMTAP-SYNC-v0/snapshot-state" ‖ 0x00 ‖ det_cbor(ObservableState))`. Two replicas at the same `covers` compute identical `root`; mismatch ⇒ `0x0A09` |
 | `SYNC-SNAP-02` | Fast-join equals replay | join via snapshot+post-ops vs full replay | byte-identical observable state | **Frozen** — `sync_snapshot_fast_join_equals_replay`. Same §6.1.1 schema: snapshot-adopt + post-`covers` ops yields byte-identical `ObservableState` (hence identical `root`) to a full replay, because only the observable projection is serialized. **Corrected (§14):** the vector's `snapshot_covers_cbor_hex` previously encoded an **integer**-keyed map `{1: Hlc, 2: Hlc}`, contradicting §5.1's `VersionVector = { * ik-pub => Hlc }` — the keys are the authors' 32-byte `ik-pub` **byte strings**, ordered by §2.2 canonical map rules (ascending by encoded key bytes). No expectation exercised it, so nothing failed; it is fixed so no implementer is misled |
 | `SYNC-FJ-01` | Fast-join response encoding | caller's vector below the responder's §6.2 floor; responder holds a signed snapshot at `covers` | byte-exact `det_cbor({2: FastJoin{1: Snapshot, 2: floor}})`; key `1` (`ops`) absent; the state body is addressed by `Snapshot.root`, fetched from `GET /sync/state/<root>` | **Frozen** — `sync_fastjoin_response`. §5.2.1 pins the response as a mutually-exclusive integer-keyed map and the encoding split: signed descriptor inline, unbounded `ObservableState` by content address (optional bounded inline copy is a verified cache hint only) |
-| `SYNC-FJ-02` | Below-floor suffix forbidden | same responder, two callers: one below the floor, one at/above it | below-floor ⇒ `fast-join` **only** — returning `{1: ops}` (the surviving suffix) is non-conformant, the silent-loss case; at/above ⇒ ordinary `{1: ops}`, no `fast-join`. Caller-side: snapshot whose `covers` does not close the caller's gap ⇒ `0x0A09`; state body unfetchable ⇒ `0x0A0C`, vector unchanged | **Frozen** — `sync_fastjoin_below_floor_suffix_forbidden`. The predicate is `Snapshot.covers` containing any HLC the caller's vector lacks (§5.2.1) |
+| `SYNC-FJ-02` | Below-floor suffix forbidden | same responder, two callers: one below the floor, one at/above it | below-floor ⇒ `fast-join` **only** — returning `{1: ops}` (the surviving suffix) is non-conformant, the silent-loss case; at/above ⇒ ordinary `{1: ops}`, no `fast-join`. Caller-side: state body unfetchable ⇒ `0x0A0C`, vector unchanged; a repeated `fast-join` at the same `root`/`covers` ⇒ `0x0A09` | **Frozen** — `sync_fastjoin_below_floor_suffix_forbidden`. The predicate is `Snapshot.covers` containing any HLC the caller's vector lacks (§5.2.1). **Corrected (§14 C-07):** the vector now also carries the `floor`/`covers` **non**-relationship — its own `floor` `(W,5,A)` sits *above* `covers[A]` `(W,4)` — and the naive `covers.lacks(floor)` predicate as an explicit **rejected** check (§5.2.2). The `{1: ops}` responses in this vector carry **real `COSE_Sign1` envelopes**, item-embedded per §5.2 (C-06) |
 | `SYNC-RECON-01` | Range-Merkle finds diff | two replicas differing in 1 op, range-fingerprint round | exactly the 1 differing op surfaced; equal ranges exchange no ops | **Frozen** — `sync_recon_range_merkle_diff`. §5.3 now pins the fold: `fp = 0x1e ‖ BLAKE3-256("DMTAP-SYNC-v0/recon-fp" ‖ 0x00 ‖ det_cbor([* op-id]))` over the range's op ids in ascending-HLC order, plus `count` — a single DS-tagged BLAKE3 hash (matching the §5.6 `recon` reference), **not** a homomorphic combiner. Equal `(fp,count)` ⇒ range identical, no ops exchanged; the one differing op is surfaced by drill-down |
 | `SYNC-NS-01` | Sparse scoping | caller subscribes `{x}`, responder holds `{x,y}` | only `ns=x` ops shipped | **Frozen** — `sync_ns_sparse_scoping` |
 | `SYNC-NS-02` | Cross-namespace ref rejected | RGA `ref` naming a target in another `ns` | reject `0x0A0A` | **Frozen** — `sync_ns_cross_namespace_ref_rejected` |
@@ -887,6 +988,9 @@ and how it was found.
 | **C-04** | **`SYNC-SNAP-02` vector corrected.** `snapshot_covers_cbor_hex` encoded an integer-keyed map `{1: Hlc, 2: Hlc}` where §5.1 specifies `VersionVector = { * ik-pub => Hlc }` (32-byte `bstr` keys). Re-encoded with `ik-pub` keys in canonical order; §5.1 now states the encoding rule explicitly (RFC 8949 §4.2.1 sorting applies to `bstr`-keyed maps just as to integer-keyed ones). | Vector fix, latent — no expectation exercised the field, so nothing failed. | Read-through during the C-01–C-03 fixes. |
 
 | **C-05** | **§5.2 `pull` gains a `fast-join` response (new §5.2.1); a bare suffix below the truncation floor is now a MUST NOT.** §6.2 permits op-log truncation and §6.1 gives a stranded peer the recovery mechanism, but §5.2's response shape had no way to *say* "you are below my floor, fast-join from this snapshot" — leaving a truncating responder two bad options: return the surviving suffix, which the caller cannot distinguish from a complete answer and which **silently loses every truncated op** while appearing to succeed; or return an error, which strands a peer that has a working recovery path. §5.2.1 now freezes the response (`PullResponse = {1 => ops} / {2 => FastJoin}`, mutually exclusive), the caller's obligations (verify signature → check `covers` closes the gap → verify the state body against `root` → adopt per §6.1 → resume pulling above `covers`), and the split encoding: the **signed descriptor inline**, the **unbounded state body by content address** via the new `GET /sync/state/<root>`, with an OPTIONAL bounded inline copy as a cache hint. Adds `0x0A0C`. | **NORMATIVE — wire protocol + a new MUST NOT.** A responder that implements §6.2 truncation and answers a below-floor caller with `{1 => ops}` is **non-conformant and loses writes**. A responder that never truncates is unaffected. | The same independent Rust implementation (envoir `dmtap-sync` / `node::syncserve`), while implementing §6.2 truncation: it could not implement the section safely within §5.2's shape, extended the response with an unspecified key `2`, and flagged prominently that no vector froze it. It was right to refuse to work around the gap silently — this entry is the specification catching up. |
+
+| **C-06** | **Op framing inside an `ops` array pinned to item-embedded, never `bstr`-wrapped (§5.2, new bullet; restated at §5.2.1).** §5.2/§5.2.1 wrote `{1 => [ COSE_Sign1(SyncOp) \| SyncFrame ]}`, which two implementations read two ways: a `COSE_Sign1` *is* an array, so embedding it directly as an array item is one defensible reading, and `bstr`-wrapping each op (the habit from formats that must preserve nested bytes) is another. Both readings survived because nothing in the text ruled either out. The decision is **item-embedded**, on the merits: nothing is hashed or verified over the *outer* `COSE_Sign1` encoding — the signature preimage is built from the `protected`/`payload` `bstr`s and the `op-id` is computed over `det_cbor(SyncOp)`, i.e. the `payload` contents — so a wrapper buys no integrity property while adding a second encoding layer, a per-op length prefix, and a second place to disagree; item-embedding keeps the whole response one deterministic-CBOR tree a validator can check without re-entering opaque blobs; it is RFC 9052's own framing; and it matches this document's existing seam (`FastJoin` ships the signed `Snapshot` as an item and the opaque hash-addressed body as a `bstr`). A `bstr`-wrapped member is now malformed (`0x0A03`). The rule is stated once and applies to every place ops cross a wire: `pull`, `POST /sync/ops`, and §5.3 drill-down. The union is discriminated on the decoded `payload`, never on framing — both variants are `COSE_Sign1` arrays. | **NORMATIVE — wire encoding.** An implementation that `bstr`-wraps ops in an `ops` array is **non-conformant**; the two framings do not interoperate and fail as an opaque decode error. | The same independent Rust implementation (envoir), which `bstr`-wrapped its `POST /sync/pull` ops and **declined to guess** when it found the frozen vector doing the opposite. It was right that the text supported both. Aggravating factor recorded here: `SYNC-FJ-02`'s `ops` member was a bare `SyncOp` stand-in rather than a real `COSE_Sign1`, so the vector could not settle the question either — a stand-in that does not have the specified shape is how an ambiguity survives a frozen vector. The vector now carries real `COSE_Sign1` envelopes. |
+| **C-07** | **The `floor`/`covers` relationship documented as a non-relationship (new §5.2.2; §6.2 and §5.2.1 step 2 corrected).** §5.2.1 step 2 required that "the responder's `floor` MUST NOT exceed `covers`". That rule is **not expressible**: `floor` is a single `Hlc` (a point in the §3 total order) and `covers` is a per-author `VersionVector`, so there is no ordering between them. An implementer reaching for the nearest available predicate wrote `covers.lacks(floor)`, which returns `true` for a well-formed fast-join — `SYNC-FJ-01`'s own frozen data has `floor` `(W,5,A)` with `covers[A]` `= (W,4)`, because `A` produced no op in that window — and so rejects conformant responders. The unverifiable clause is **removed**, not reworded. §5.2.2 now states the split explicitly: the caller **verifies** the snapshot signature/admission/`ns`, `covers` well-formedness, the state body against `root`, and that fast-join **makes progress** (a repeated `fast-join` at the same `root`/`covers` is `0x0A09`, a loop this document previously allowed); it **MAY** check that `covers` carries a mark for `floor.author` as a logging-grade signal (not a MUST — an author whose only op is *at* the floor is retained, not truncated, so `covers` need never name it); and it **trusts** that every truncated op was folded into `covers`, since that is quantified over ops the caller cannot see. §6.2 gains the matching responder-side statement — the accounting obligation is discharged where the ops are enumerable — and §5.2.2 also records that adopting `covers` may move the caller's vector *backwards* for an author, which is intended and MUST NOT be treated as an error (step 5's re-pull re-ships the retained suffix). | **NORMATIVE — a removed MUST plus a new one.** An implementation enforcing any `floor`-vs-`covers` ordering check rejects conformant peers and must delete it; the new progress MUST (`0x0A09` on a repeated identical `fast-join`) must be added. | The same implementation, writing the caller side of §5.2.1: its first pass implemented the clause literally, and the check failed against `SYNC-FJ-01`'s own frozen data — the vector caught the specification's own sentence. |
 
 **Standing rule.** A defect between this document and a conformance vector is resolved by deciding
 **which side is right on the merits** and correcting the other **in the open** (the §10 discipline: a

@@ -234,6 +234,18 @@ signature01 = SK_A.sign(sig_structure01)
 cose_sign1_01 = enc_array([protected01, unprotected01, payload01, enc_bstr(signature01)])
 op_id_01 = content_addr(DS_OP_ID, op01)
 
+
+def cose_sign1(op_bytes: bytes, sk, pk: bytes) -> bytes:
+    """The §4.1 wire object for one op: the RFC 9052 COSE_Sign1 four-element ARRAY
+    [protected, unprotected, payload, signature], deterministic-CBOR encoded.
+
+    Per §5.2's op-framing rule this value is embedded in an `ops` array as a CBOR
+    ITEM — it is NOT bstr-wrapped (correction C-06)."""
+    protected = enc_bstr(enc_map([(1, enc_int(COSE_ALG_EDDSA)), (4, enc_bstr(pk))]))
+    payload = enc_bstr(op_bytes)
+    sig_structure = enc_array([enc_tstr("Signature1"), protected, enc_bstr(DS_OP), payload])
+    return enc_array([protected, enc_map([]), payload, enc_bstr(sk.sign(sig_structure))])
+
 # Tamper case: flip the low bit of the FINAL payload byte (the last byte of det_cbor(SyncOp)) and
 # re-frame with the SAME signature — the signature must now fail.
 op01_tampered = op01[:-1] + bytes([op01[-1] ^ 0x01])
@@ -841,7 +853,14 @@ floor_hlc = encode_hlc(HLC_WALL, 5, PK_A)
 
 fastjoin_map = enc_map([(1, snapshot_fj), (2, floor_hlc)])
 pull_resp_fastjoin = enc_map([(2, fastjoin_map)])
-pull_resp_ops = enc_map([(1, enc_array([op_post]))])   # the ordinary answer, for contrast
+
+# The ordinary {1: ops} answer, for contrast. §5.2 op framing (correction C-06): the member is a REAL
+# COSE_Sign1 (§4.1) embedded as a CBOR ITEM, never bstr-wrapped. op_post is authored by B, so it is
+# signed under SK_B with kid = PK_B. The non-conformant bstr-wrapped framing is emitted alongside it
+# purely so an implementer can see which byte string is the WRONG one.
+cose_post = cose_sign1(op_post, SK_B, PK_B)
+pull_resp_ops = enc_map([(1, enc_array([cose_post]))])
+pull_resp_ops_bstr_wrapped_NONCONFORMANT = enc_map([(1, enc_array([enc_bstr(cose_post)]))])
 
 # The OPTIONAL bounded inline copy (key 3): the same ObservableState bytes the caller would
 # otherwise fetch from GET /sync/state/<root>. It is a CACHE HINT — verified by hashing to
@@ -909,24 +928,24 @@ covers_behind = enc_bstr_map([
     (PK_A, encode_hlc(HLC_WALL, 4, PK_A)),
     (PK_B, encode_hlc(HLC_WALL, 2, PK_B)),
 ])
-# A snapshot that does NOT close the caller's gap: it covers less than the caller already lacks.
-snapshot_short, _, _ = encode_snapshot(
-    ns="", covers=enc_bstr_map([(PK_A, encode_hlc(HLC_WALL, 1, PK_A))]),
-    root=root_v1, ts=SNAP_TS, sk=SK_A, signer=PK_A
-)
-
 add(
     "sync_fastjoin_below_floor_suffix_forbidden",
     "sync_fastjoin_floor_predicate",
     {
         "responder_floor_hlc_cbor_hex": floor_hlc.hex(),
+        "responder_floor_hlc": {"wall": HLC_WALL, "counter": 5, "author_hex": PK_A.hex()},
         "responder_snapshot_covers_cbor_hex": covers_v1.hex(),
+        "responder_snapshot_covers_note": "A@(W,4), B@(W,7) — note covers[A] is BELOW the floor HLC "
+                                          "(W,5,A): author A produced no op in that window. This is "
+                                          "well-formed (§5.2.2).",
         "caller_behind_vector_cbor_hex": covers_behind.hex(),
         "caller_behind_note": "lacks B@(W,7), an HLC folded into the responder's snapshot `covers`",
         "caller_caught_up_vector_cbor_hex": covers_caught_up.hex(),
         "caller_caught_up_note": "dominates every HLC in `covers`; the surviving suffix is complete",
-        "surviving_suffix_ops_cbor_hex": [op_post.hex()],
-        "snapshot_not_covering_gap_cbor_hex": snapshot_short.hex(),
+        "surviving_suffix_ops_cbor_hex": [cose_post.hex()],
+        "surviving_suffix_ops_framing": "each member is a §4.1 COSE_Sign1 four-element array embedded "
+                                        "as a CBOR ITEM (§5.2 op framing, correction C-06)",
+        "surviving_suffix_inner_syncop_cbor_hex": [op_post.hex()],
     },
     {
         "predicate": "behind_floor := exists (author, hlc) in Snapshot.covers such that "
@@ -938,13 +957,30 @@ add(
         "caller_caught_up_is_below_floor": False,
         "caller_caught_up_response_cbor_hex": pull_resp_ops.hex(),
         "caller_caught_up_fastjoin_forbidden": True,
-        "snapshot_not_covering_gap_error_code": "0x0A09",
-        "snapshot_not_covering_gap_error_name": "ERR_SYNC_SNAPSHOT_ROOT_MISMATCH",
+        "ops_member_framing": "item-embedded COSE_Sign1",
+        "ops_member_bstr_wrapped_conformant": False,
+        "ops_member_bstr_wrapped_NONCONFORMANT_cbor_hex":
+            pull_resp_ops_bstr_wrapped_NONCONFORMANT.hex(),
+        "ops_member_bstr_wrapped_error_code": "0x0A03",
+        "floor_vs_covers_is_orderable": False,
+        "floor_vs_covers_naive_predicate_rejected": "covers.lacks(floor)",
+        "floor_vs_covers_naive_predicate_value_here": True,
+        "floor_vs_covers_naive_predicate_note": "the naive predicate evaluates TRUE on this "
+            "well-formed fast-join and would reject a conformant responder: `floor` is a single Hlc, "
+            "`covers` is a per-author VersionVector, and there is no ordering between them (§5.2.2). "
+            "No floor-vs-covers check exists in this specification.",
+        "covers_carries_mark_for_floor_author": True,
+        "covers_mark_for_floor_author_is_MUST": False,
+        "caller_trusts_all_truncated_ops_folded_into_covers": True,
+        "repeated_fastjoin_same_root_and_covers_error_code": "0x0A09",
+        "repeated_fastjoin_same_root_and_covers_action": "fail the round; do NOT re-adopt",
         "state_body_unfetchable_error_code": "0x0A0C",
         "state_body_unfetchable_error_name": "ERR_SYNC_SNAPSHOT_STATE_UNAVAILABLE",
         "state_body_unfetchable_action": "FAIL_CLOSED_BLOCK",
         "state_body_unfetchable_caller_vector_unchanged": True,
         "suffix_fallback_after_failed_fastjoin_forbidden": True,
+        "adopting_covers_may_regress_caller_vector": True,
+        "adopting_covers_regression_is_an_error": False,
     },
     "§5.2.1 (frozen), the MUST this vector exists for: a responder whose §6.2 truncation floor is "
     "above the caller's vector MUST NOT answer with {1: ops}. The response shown as "
@@ -958,10 +994,30 @@ add(
     "alone: if the caller lacks any HLC the snapshot folded in, some op it needs may have been "
     "truncated. Conversely a caught-up caller MUST NOT be forced to fast-join — the suffix is a "
     "complete answer for it, and fast-joining it would discard verified local history for a "
-    "trusted checkpoint. Caller-side fail-closed: a snapshot whose `covers` does not close the "
-    "gap it was sent to close is 0x0A09 (it would leave the same hole), and a state body no "
-    "holder can serve is 0x0A0C with the caller's vector UNCHANGED — never a fallback to the "
-    "truncated suffix, which would reintroduce the silent loss by the back door.",
+    "trusted checkpoint. Caller-side fail-closed: a state body no holder can serve is 0x0A0C "
+    "with the caller's vector UNCHANGED — never a fallback to the truncated suffix, which would "
+    "reintroduce the silent loss by the back door; and a repeated `fast-join` at the same "
+    "root/`covers` is 0x0A09 (the responder is looping, §5.2.1 step 5's progress MUST). "
+    "TWO CORRECTIONS ARE FROZEN HERE. (C-06, §5.2 op framing) the members of an `ops` array are "
+    "§4.1 COSE_Sign1 four-element ARRAYS embedded as CBOR ITEMS, never bstr-wrapped — nothing is "
+    "hashed or verified over the outer COSE_Sign1 encoding (the signature preimage is built from "
+    "the protected/payload bstrs, the op-id from det_cbor(SyncOp) = the payload contents), so a "
+    "wrapper buys no integrity property and only adds a framing two implementations can disagree "
+    "on. `ops_member_bstr_wrapped_NONCONFORMANT_cbor_hex` is the WRONG encoding, published so it "
+    "can be recognized; it is 0x0A03. This vector's ops are real signed COSE_Sign1 envelopes, not "
+    "bare SyncOp stand-ins — the earlier stand-in is why the ambiguity survived. "
+    "(C-07, §5.2.2 floor vs covers) `floor` is a single Hlc, `covers` is a per-author "
+    "VersionVector; there is NO ordering between them and this specification states no "
+    "floor-vs-covers rule. The tempting `covers.lacks(floor)` predicate evaluates TRUE on THIS "
+    "well-formed data — floor (W,5,A) sits above covers[A]=(W,4) because A produced no op in "
+    "that window — and an implementation using it rejects conformant responders. The caller "
+    "VERIFIES: signature/admission/ns, covers well-formedness, the body against root, and "
+    "progress. It MAY check that covers carries a mark for floor.author (a logging-grade signal; "
+    "NOT a MUST, since an author whose only op is AT the floor is retained, not truncated). It "
+    "TRUSTS that every truncated op was folded into covers — a statement about ops it cannot "
+    "see, discharged at the responder by §6.2 and backed by §6.1's trust policy. Adopting covers "
+    "may move the caller's vector BACKWARDS for an author; that is intended, not an error, since "
+    "step 5's re-pull re-ships the retained suffix.",
 )
 
 # ══════════════════════════════════════════════════════════════════════════════════════
@@ -1156,7 +1212,15 @@ out = {
     "the surviving suffix — silently losing every truncated op while APPEARING to succeed — or error "
     "and strand the peer. §5.2.1 now specifies the fast-join response, makes the bare suffix a MUST "
     "NOT, and adds GET /sync/state/<root> plus error 0x0A0C. Vector count goes 20 -> 22 (SYNC-FJ-01, "
-    "SYNC-FJ-02 added; the other 20 are byte-identical to the previous generation).",
+    "SYNC-FJ-02 added; the other 20 are byte-identical to the previous generation). C-06 and C-07 (both "
+    "found by the same implementation, which DECLINED to guess) tighten SYNC-FJ-02 without changing the "
+    "count, which stays 22: C-06 pins op framing inside an `ops` array to item-embedded COSE_Sign1, "
+    "never bstr-wrapped (§5.2) — this vector's ops are now REAL COSE_Sign1 envelopes rather than bare "
+    "SyncOp stand-ins, since a stand-in that lacks the specified shape is precisely how the ambiguity "
+    "survived a frozen vector; C-07 removes §5.2.1's unverifiable 'floor MUST NOT exceed covers' clause "
+    "(a category error: a single Hlc vs a per-author VersionVector) in favour of §5.2.2's explicit split "
+    "between what a caller verifies and what it trusts, and freezes the rejected `covers.lacks(floor)` "
+    "predicate here alongside the data on which it wrongly fires.",
     "vectors": vectors,
 }
 print(json.dumps(out, indent=2))
