@@ -35,7 +35,8 @@ It defines:
 - **live streaming** (§24.10) as an *optional capability* (`vid-live-1`): rolling signed segment
   batches that close into an ordinary VOD `VideoManifest`;
 - **licensing** (§24.11), **gateway usage** (§24.12), the **content-moderation posture** (§24.13),
-  the **vidmesh migration note** (§24.14), and the **profile conformance checklist** (§24.15).
+  the **vidmesh migration note** (§24.14), the **profile conformance checklist** (§24.15), and the
+  **migration-guidance change log** (§24.17), corrected against a real convergence implementation.
 
 **What this profile does and does not add to the core.** Like §23 (CAD), this profile allocates
 **no core message kind, no DS-tag in the §21 registry, and no §21 error block**: every metadata map
@@ -631,9 +632,13 @@ anonymity.
 ## 24.14 Migration from vidmesh-format records
 
 vidmesh independently reinvented §22 with incompatible bytes. A vidmesh record becomes a conforming
-DMTAP-PUB object by the following **one-time, mechanical** changes. Because vidmesh already chose the
+DMTAP-PUB object by the following **one-time, per-author** changes. Because vidmesh already chose the
 *same cryptographic primitives* DMTAP requires at the v0 floor — Ed25519 (RFC 8032) and BLAKE3-256 —
-convergence is a re-framing of *structure*, never a re-hash of content or a re-choice of algorithm.
+convergence is never a re-choice of algorithm, and the identity layer costs nothing to move (item 7).
+It is **not**, however, uniformly cheap or uniformly mechanical: producing the new bytes needs a fresh
+signature only the author can make (items 1, 2, 4, 8), and migrating a media blob's content addressing
+needs a genuine re-hash of the stored bytes, not just a re-framing of retained digests (item 4,
+corrected — this was previously mis-stated as free; see the erratum in §24.17).
 
 1. **Envelope → `pub_announce`.** A vidmesh record is a CBOR map with integer envelope keys 1–7
    (`kind`/`author`/`created_at`/`refs`/`body`/`sig_alg`/`sig`) signed as
@@ -648,18 +653,36 @@ convergence is a re-framing of *structure*, never a re-hash of content or a re-c
    which this profile deliberately keeps as a profile-scoped `"DMTAP-VID-v0/derivation"` context
    (§24.4.4), domain-separated from every core context by construction.
 3. **Multihash prefix on blob ids.** vidmesh blob ids are **bare 32-byte BLAKE3** (`b3-256:<hex>`, no
-   prefix). DMTAP content addresses carry the **multihash prefix `0x1e ‖`** (BLAKE3-256, §18.1.5). A
-   vidmesh blob id maps to `0x1e ‖ <same 32 bytes>` — a **one-byte prepend, no re-hash**, because both
-   are BLAKE3-256. (This is the cleanest part of convergence: unlike the kerf-pub reference, which
+   prefix) over the **whole blob's bytes** — a plain `BLAKE3-256(bytes)`, unrelated to the chunk tree of
+   item 4. DMTAP content addresses carry the **multihash prefix `0x1e ‖`** (BLAKE3-256, §18.1.5). A
+   vidmesh whole-blob id maps to `0x1e ‖ <same 32 bytes>` — a **one-byte prepend, no re-hash**, because
+   both are BLAKE3-256. (This is the cleanest part of convergence: unlike the kerf-pub reference, which
    ships SHA-256 under prefix `0x12` and must migrate, vidmesh already matches the v0-REQUIRED BLAKE3
-   prefix.)
-4. **Chunk root → §22 `PubManifest` root.** vidmesh's `Media.chunk_root` is a BLAKE3 chunk tree with
-   `0x00`/`0x01` leaf/interior domain separation (kernel §8). A conforming media blob is a §22
-   `PubManifest` whose chunks are the same 1 MiB plaintext chunks, but whose Merkle root folds the
-   **`"DMTAP-PUB-v0/manifest"` DS-tag** into every leaf and node (§22.2.2). The **chunk leaf hashes are
-   identical** (bare-chunk BLAKE3); only the tree's domain separation differs, so re-derivation is a
-   **tree recompute over the existing chunk hashes**, not a re-read of the media bytes. The separate
-   `chunk_root` field disappears — the `PubManifest` *is* the chunk list and its root.
+   prefix.) **Scope note:** this cheap transform applies to a whole-blob or record content reference used
+   for cross-linking (e.g. the traceability address carried in `meta["vidmesh.record"]`, item 6) — it is
+   **not** the value any of this profile's `hash`-typed blob fields need. `Media.blob`, `Rendition.blob`,
+   `Caption.blob`, and `thumbnail` (§24.4.2, §24.4.1) all require a `manifest_root` — item 4's
+   `PubManifest.id` — which is the expensive derivation below, not this one.
+4. **Chunk root → §22 `PubManifest` root — an I/O-bound re-read, not a metadata recompute (corrected;
+   erratum C-01, §24.17).** vidmesh's `Media.chunk_root` is a BLAKE3 chunk tree whose domain separation
+   is folded **into the per-chunk hash itself**: the value vidmesh persists per chunk is
+   `BLAKE3-256(0x00 ‖ chunk_i)` (kernel §8) — a tagged leaf digest, not a bare chunk hash. §22's
+   `PubManifest.chunks` requires a **different pre-image at that same position**:
+   `h_i = 0x1e ‖ BLAKE3-256(chunk_i)`, the *undecorated* plaintext-chunk hash (§22.2.2) — §22 folds its
+   own `"DMTAP-PUB-v0/manifest"` DS-tag one level **up**, at the `leaf()`/`node()` tree step, not into
+   `h_i` itself. **These are not the same value, and neither is derivable from the other**:
+   `BLAKE3-256(0x00 ‖ chunk_i)` cannot be un-mixed into its `0x00` tag and a bare `BLAKE3-256(chunk_i)` —
+   a hash with a domain tag folded into its input does not expose an untagged hash as a byproduct. Nor
+   does a vidmesh record even retain a per-chunk list to fall back on: `Media.chunk_root` is the single
+   32-byte tree **root**, not the ordered `h_0…h_{n-1}` list a `PubManifest` needs. **The chunk leaf
+   hashes are therefore not identical, and re-derivation is not a tree recompute over retained digests —
+   it requires re-reading every stored media byte and re-hashing each chunk from the plaintext** (the
+   same 1 MiB chunk boundaries, but a fresh hash of the bytes, never a reuse of a stored value), exactly
+   as if the file were being published for the first time. For a video platform this is the entire
+   difference between a metadata migration (cost proportional to record count) and an I/O-bound one (cost
+   proportional to total stored media bytes) — a migration plan MUST budget it as the latter. The
+   separate `chunk_root` field disappears once migrated — the `PubManifest` *is* the chunk list and its
+   root.
 5. **FeedHead / anti-rollback adoption (the substantive gap).** vidmesh has **no signed feed head**: it
    orders records by a **relay-local, unauthenticated `seq` receipt counter** (§006 §2), which gives no
    per-author anti-rollback and no equivocation evidence — a relay can silently omit or reorder an
@@ -677,6 +700,43 @@ convergence is a re-framing of *structure*, never a re-hash of content or a re-c
 6. **`refs` → typed subjects.** vidmesh positional `refs` (`[ref_type, hash]`, type 0 = record, type 1
    = blob) become the named `subject`/`parent`/`channel`/`derived_from` fields of the profile schemas
    above (each a `hash` content address), so an interpreter no longer relies on ref *position*.
+7. **Identity requires no migration (informative, and the one item that is free).** A vidmesh `Keypair`
+   and a §22 `IdentityKey` are **both Ed25519 keys built from the same 32-byte RFC 8032 seed** —
+   reinterpreting one as the other is a type relabeling, not a key derivation, and the public key is
+   **bit-identical** on both sides. An existing vidmesh author therefore publishes §22 objects **under
+   the identity they already hold**: no new keypair, no rotation, no re-provisioning of trust (any
+   `DeviceCert` chain, delegate grant, or follower relationship rooted in that `IK` carries over
+   unchanged). This is the one item on this list that costs nothing.
+8. **Records cannot be migrated in bulk — re-signing needs the author's key (informative, corrected).**
+   Items 1, 2, and 4 each change the signed pre-image — a new envelope, a new DS-tag, and (per item 4, in
+   the general case) a new chunk-tree root. None of these is a transform *on the old signature bytes*:
+   each produces a genuinely new object that only the author — or a device holding a valid, unrevoked
+   `DeviceCert` chaining to that author's `IK` (§1.2) — can sign. A migration tool, gateway, or archive
+   that holds only the *plaintext* of a vidmesh record (which is everything a public vidmesh relay or
+   mirror holds) **cannot** produce a valid `pub_announce` for it, because it does not hold the signing
+   key. Concretely: **there is no automatic, bulk, third-party migration of existing vidmesh records to
+   §22 bytes.** Migration to §22 is necessarily **per-author and consensual** — each identity re-publishes
+   its own catalog (item 7 makes this cheap on the key side; item 4 is what makes it expensive on the I/O
+   side) — never a batch job an operator runs unilaterally over records it merely stores on someone
+   else's behalf.
+
+**History stays dual-format; a gateway MUST NOT launder authorship through attestation.** Migration is
+**prospective, not retroactive**: a vidmesh record published before an identity migrates remains a valid,
+permanent, irrevocable vidmesh-format object — irrevocability (§22.7, §24.7) applies to whichever
+substrate a given record actually was published under, and there is no in-place rewrite of history. A
+reader's client MUST retain the ability to verify **both** formats for as long as pre-migration content is
+served; "migrated" describes what an identity publishes going forward, never a bulk rewrite of what it
+already published. A gateway MAY choose to **re-attest** old vidmesh-format content it holds under its own
+key as a `meta["attest"]`-style claim (§24.8) — "gateway G vouches this pre-migration record is
+authentic" — but that is **gateway reputation, not authorship**, and MUST be rendered with a **visibly
+weaker** verification indicator than an author-signed §22 object. Presenting a gateway attestation of an
+un-migrated record behind the **same verification badge** as a direct author signature is a **security
+misrepresentation**: it tells a viewer "the creator signed this" when what actually happened is "a third
+party vouches for something the creator never signed under these bytes." This is not a hypothetical edge
+case — it is the natural shape a "convenience" migration wrapper reaches for, and it recreates exactly the
+authority confusion §22.9's honest-limits discipline exists to keep legible. A conformant client that
+surfaces attestation provenance MUST distinguish the two cases visibly in its UI, not only in metadata a
+user never inspects.
 
 **Bundles.** vidmesh's `.vmsh` bundle (a magic-prefixed CBOR sequence of records + blobs with an `end`
 count, §007) is a useful **partition-tolerant export** for DTN/sneakernet/archival. It carries over as
@@ -731,6 +791,25 @@ up where they belong so any product — not only video — can use them:
    more than `contest_window` seconds ago, then a bytewise record-id tiebreak) is proposed as an
    informative note in [`substrate/IDENTITY.md`](substrate/IDENTITY.md) for the **zero-DNS / zero-KT
    key-name floor**, where no transparency log exists to anchor rotation ordering.
+
+## 24.17 Change log — normative corrections
+
+This document is pre-1.0 and is corrected in the open, in the same discipline
+[`substrate/SYNC.md § 14`](substrate/SYNC.md) established: a defect found by an implementation is fixed
+here **and recorded here**, never silently edited. Each entry states what changed, whether it changes
+**wire bytes** (a KAT/vector consumer must be updated) or only **informative guidance** (migration
+text, cost estimates, operational advice — no bytes on the wire change), and how it was found.
+
+| # | Change | Class | Found by |
+|---|--------|-------|----------|
+| **C-01** | **§24.14 item 4 corrected: migrating a vidmesh blob to §22 is an I/O-bound re-read of the media bytes, not a metadata-only tree recompute.** The prior text claimed "the chunk leaf hashes are identical (bare-chunk BLAKE3); only the tree's domain separation differs, so re-derivation is a tree recompute over the existing chunk hashes, not a re-read of the media bytes." That is false: vidmesh's stored leaf value is `BLAKE3-256(0x00 ‖ chunk)` — the `0x00` domain tag is folded *into* the hash, not applied one level above it — while §22's `PubManifest.chunks` needs the *undecorated* `BLAKE3-256(chunk)` at that position. There is no operation that recovers the untagged hash from the tagged one, and vidmesh does not even retain a per-chunk list to begin with (`Media.chunk_root` is the single tree root). Migration therefore requires re-reading and re-hashing every stored media byte — for a video platform, the difference between a cost proportional to record count and a cost proportional to total stored bytes. Item 4's text is corrected to state this plainly; a new item 3 scope note prevents the adjacent (and correct) multihash-prefix transform from being mistaken for a solution to the same problem. | **INFORMATIVE — migration-cost/mechanism correction.** §24.14 is non-normative migration guidance, not the §22 wire format; no CDDL, DS-tag, or `PubManifest`/chunk-hash rule changes, and no conformance vector changes (§22's `pub_vectors.json` and this profile's construction-todo KATs are both unaffected). An implementation planning a vidmesh→§22 migration around the old text would under-provision I/O capacity and timeline by the gap between "recompute a tree" and "re-read every video file." | The vidmesh phase-1 `dmtap-core` adoption (`docs/DMTAP-CONVERGENCE.md`, commits `fa646f2`/`aa27b6a`/`09b5fc1`): its `dmtap_pub` bridge module computes both digests for the same chunk and asserts them unequal (`stored_vidmesh_leaf_is_not_the_pub_chunk_address`), with the §22 side checked byte-for-byte against the frozen `pub_manifest_single_chunk` vector — so the correction is corpus-anchored, not merely argued. |
+| **C-02** | **§24.14 gains items 7–8 and a dual-format/attestation paragraph: no key migration is needed, but no bulk record migration is possible either, and old records stay dual-format.** The prior six items described byte-level transforms but never stated the two facts that most affect a migration plan's shape: (a) a vidmesh `Keypair` and a §22 `IdentityKey` are both Ed25519 seeds with a bit-identical public key, so an author needs **no new key** to publish under this profile; (b) precisely because items 1/2/4 change the signed pre-image, re-signing an *existing* record needs the **author's** key, which a gateway, archive, or migration tool holding only plaintext never has for a self-custodied identity — so migration is **per-author and consensual, never a bulk operator-run rewrite**. The new closing paragraph adds the guidance this implies: pre-migration history remains valid and permanent in its original vidmesh bytes (irrevocability applies per-record, to whichever substrate it was actually published under, not retroactively), and a gateway that chooses to re-attest old content under its own key MUST render that attestation with a visibly weaker verification badge than an author signature — presenting the two identically is a security misrepresentation (the creator did not sign these bytes; the gateway is vouching for them). | **Guidance addition, not a semantics change.** Items 1–6 and every §22/§24 normative rule are unchanged. This states a **new consequence** of already-normative rules (§1.2 key structure, §22.3.3 signer authorization, §22.7/§24.7 irrevocability, §24.8's "attestation is worth exactly the attester's reputation") that §24.14 previously left the reader to infer, and one new expectation (the visibly-weaker attestation badge) stated here because its absence is a legible security failure mode a product would otherwise ship by default. | Same vidmesh phase-1 adoption: `keypair_to_identity_key`'s round-trip test (`identity_key_material_is_shared`) established (a); the same investigation, reasoning forward from what its bridge module can and cannot construct without the author's private key, established (b) and the attestation-wrapper risk this closing paragraph now warns against for the whole profile, not just one product's design doc. |
+
+**Standing rule.** A defect between this document and an implementation is resolved by deciding **which
+side is right on the merits** and correcting the other in the open, exactly as [`substrate/SYNC.md`](substrate/SYNC.md)
+§14 states it. §24.14 is informative migration guidance, so its corrections are Class INFORMATIVE by
+default unless a fix also touches a CDDL shape, a DS-tag, or a `VID-*` conformance MUST — none of C-01 or
+C-02 does.
 
 ## Appendix A: vidmesh kind → profile object mapping (informative)
 
