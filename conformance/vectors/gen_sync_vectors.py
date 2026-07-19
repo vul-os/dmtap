@@ -946,6 +946,16 @@ VAL_ACCEPT = [
     ("tstr_opaque_json", val_opaque,
      "an opaque JSON payload carried as tstr — still conformant, and still the right choice "
      "for foreign or byte-exact-round-trip content (§4.1.1)"),
+    ("map_empty", enc_map([]),
+     "the EMPTY map, 0xa0 (§14 C-14). `{ * tstr => ext-value }` admits zero entries, so this IS "
+     "an ext-value — and 0xa0 is the encoding of an empty map of ANY key type, so the key-type "
+     "ambiguity a decoder faces here is REAL but VACUOUS: there are no keys to disagree about and "
+     "nothing that could be smuggled through them. Refusing it (the reflex of a validator that "
+     "rejects maps whose key type it cannot confirm) would make a legal ext-value un-decodable. "
+     "MUST be accepted as the empty text-keyed map"),
+    ("array_empty", enc_array([]),
+     "the EMPTY array, 0x80 — accepted on the same reasoning as map_empty and with no ambiguity "
+     "at all; listed so the two empties are frozen as a pair"),
 ]
 
 VAL_REJECT = [
@@ -983,6 +993,35 @@ add(
         "reject_error_name": "ERR_SYNC_OP_INVALID",
         "validation_is_recursive": True,
         "carrier_op_accepted": True,
+        "empty_map_is_ext_value": True,
+        "empty_map_cbor_hex": "a0",
+        "empty_map_key_type_is_undeterminable": True,
+        "empty_map_note": "0xa0 encodes an empty map of ANY key type; it is accepted as the empty "
+                          "{ * tstr => ext-value }. The ambiguity is vacuous — no entries, hence "
+                          "nothing to smuggle — and refusing it would make a legal ext-value "
+                          "un-decodable (§4.1, §14 C-14).",
+        "nonempty_int_keyed_map_still_rejected": True,
+        "max_nesting_depth": 64,
+        "max_nesting_depth_is_a_MUST": True,
+        "max_nesting_depth_note": "§4.1 (§14 C-14): the ceiling is REQUIRED and fixed at 64 "
+                                  "container levels (outermost value = depth 0), the same number "
+                                  "DMTAP's deterministic-CBOR decoder applies to every other "
+                                  "object, so one encoder cannot mint a value a second decoder "
+                                  "refuses. It MUST be checked BEFORE recursing — an over-deep "
+                                  "item is a 0x0A03 refusal, never a stack exhaustion — and it "
+                                  "applies to ALL sync decoding (ops, PullResponse, SnapshotBody, "
+                                  "fingerprint requests), not only to `value`. No byte-exact "
+                                  "over-deep case is frozen here on purpose: an off-by-one at the "
+                                  "boundary would freeze an accident rather than the rule.",
+        "value_profile_subtoken": "sync-1/ext-value-2",
+        "value_profile_subtoken_is_a_gate": False,
+        "value_profile_subtoken_note": "§4.1.2 (§14 C-13): a node accepting the full ext-value MAY "
+                                       "advertise `sync-1/ext-value-2` — in the sync-1 capability "
+                                       "token and/or as `profiles` (key 4) in the GET /sync/vector "
+                                       "response. It is OBSERVATIONAL: absence means 'unknown', "
+                                       "never 'profile 1'; a node MUST NOT refuse, downgrade, or "
+                                       "narrow its own validation on it. Its one conformant use is "
+                                       "a PRODUCER deciding whether to mint nested values.",
     },
     "§4.1/§4.1.1 (C-08): a SyncOp `value` is EXACTLY §18.3.6's `ext-value` — "
     "bool / int / bytes / tstr / [* ext-value] / { * tstr => ext-value } — recursive, with "
@@ -997,7 +1036,14 @@ add(
     "signature preimage on every MOTE. Validation MUST be recursive (see the depth-2 reject case) "
     "and MUST fail closed at the first violating node — 0x0A03, never a canonicalization guess. "
     "The carrier op shows the intended shape end-to-end: one LWW register per (slide, object), "
-    "nesting used for REPRESENTATION while §4.1.1's merge boundary stays at the whole value.",
+    "nesting used for REPRESENTATION while §4.1.1's merge boundary stays at the whole value. "
+    "C-14 adds the one case the original boundary did not cover: the EMPTY map 0xa0, which is "
+    "key-type-AMBIGUOUS (0xa0 is the encoding of an empty map whatever its keys would have been) "
+    "and is nonetheless a legal ext-value, so it MUST be accepted — the ambiguity carries no "
+    "entries and therefore no smuggling channel, while refusing it would make a legal value "
+    "un-decodable. The depth ceiling is also fixed here at 64 and made a MUST rather than left to "
+    "each implementation's 'ordinary' ceiling, and C-13's `sync-1/ext-value-2` sub-token is the "
+    "(advisory, never gating) handle by which a peer's profile can be asked about at all.",
 )
 
 # ══════════════════════════════════════════════════════════════════════════════════════
@@ -1042,10 +1088,91 @@ cose_post = cose_sign1(op_post, SK_B, PK_B)
 pull_resp_ops = enc_map([(1, enc_array([cose_post]))])
 pull_resp_ops_bstr_wrapped_NONCONFORMANT = enc_map([(1, enc_array([enc_bstr(cose_post)]))])
 
-# The OPTIONAL bounded inline copy (key 3): the same ObservableState bytes the caller would
-# otherwise fetch from GET /sync/state/<root>. It is a CACHE HINT — verified by hashing to
-# Snapshot.root exactly as a fetched body is, and discarded on mismatch.
-fastjoin_map_inline = enc_map([(1, snapshot_fj), (2, floor_hlc), (3, enc_bstr(state_v1))])
+# ── The §6.1.2 SnapshotBody for this snapshot (correction C-11) ──────────────────────────────────
+# Key 3 carries the BODY, and after C-09 the body is a compacted OP SET — not det_cbor(
+# ObservableState). This vector previously froze the state document here, which is the one value a
+# caller must NOT adopt; §10's row claimed C-09 "does not change this vector's bytes — key 3 is
+# absent", true of pull_response_cbor_hex and false of the inline variant the vector also carries.
+#
+# The body is the §6.2 RETENTION SET for state_v1 — one op per live element, and nothing else.
+# Op → the §6.1.1 section entry it produces:
+#
+#   (W,0,A) counter      stock1/qty += 5        ┐
+#   (W,0,B) counter      stock1/qty += −2       ┘→ pn    [stock1,qty,3]   BOTH retained: no counter
+#                                                        delta is ever superseded (C-13)
+#   (W,1,A) lww-set      doc1/title = "n"        → lww   [doc1,title,n]
+#   (W,2,A) set-add      "e1" on "tags"          → orset [tags,e1]
+#   (W,3,A) seq-insert   "atom0" on line1, ⊥     ┐
+#   (W,6,B) seq-insert   "Y"  ref=atom0          ├→ rga   [line1,[atom0,Y,X]]  same-origin siblings
+#   (W,5,B) seq-insert   "X"  ref=atom0          ┘       order by DESCENDING element id: Y then X
+#   (W,4,A) death        rec1, class "redact"    → death [rec1,redact]
+#   (W,4,B) tree-move    B under "" , ord "b"    ┐
+#   (W,7,B) tree-move    A under B  , ord "1"    ┘→ tree  [A,B,1] [B,"",b]   replayed oldest-first:
+#                                                        B lands at the root, then A under B (no
+#                                                        cycle, so no §4.8 skip)
+#
+# HLCs are strictly monotonic per author (A: 0,1,2,3,4 — B: 0,4,5,6,7), as §3's tick rule requires,
+# and every one lies within `covers` = {A@(W,4), B@(W,7)}. These are freshly minted rather than
+# reused from this file's earlier vectors: those vectors are independent scenarios that reuse
+# counters across each other, so composing their literal ops into one history would freeze a journal
+# in which an author minted two ops at the same HLC. The observable state they fold to is identical,
+# which is what `root` commits to.
+fjb_pn_a = encode_sync_op(kind=5, ns="", target="stock1", field="qty", value=enc_int(5),
+                          hlc_bytes=encode_hlc(HLC_WALL, 0, PK_A))
+fjb_pn_b = encode_sync_op(kind=5, ns="", target="stock1", field="qty", value=enc_int(-2),
+                          hlc_bytes=encode_hlc(HLC_WALL, 0, PK_B))
+fjb_lww = encode_sync_op(kind=3, ns="", target="doc1", field="title", value=enc_tstr("n"),
+                         hlc_bytes=encode_hlc(HLC_WALL, 1, PK_A))
+fjb_add = encode_sync_op(kind=1, ns="", target="tags", value=enc_tstr("e1"),
+                         hlc_bytes=encode_hlc(HLC_WALL, 2, PK_A))
+fjb_atom0_hlc = encode_hlc(HLC_WALL, 3, PK_A)
+fjb_rga_atom0 = encode_sync_op(kind=6, ns="", target="line1", value=enc_tstr("atom0"),
+                               hlc_bytes=fjb_atom0_hlc)                      # ⊥ = list head
+fjb_rga_x = encode_sync_op(kind=6, ns="", target="line1", value=enc_tstr("X"),
+                           hlc_bytes=encode_hlc(HLC_WALL, 5, PK_B),
+                           ref=encode_opref("line1", fjb_atom0_hlc))
+fjb_rga_y = encode_sync_op(kind=6, ns="", target="line1", value=enc_tstr("Y"),
+                           hlc_bytes=encode_hlc(HLC_WALL, 6, PK_B),
+                           ref=encode_opref("line1", fjb_atom0_hlc))
+fjb_death = encode_sync_op(kind=4, ns="", target="rec1", field="redact",
+                           hlc_bytes=encode_hlc(HLC_WALL, 4, PK_A))
+fjb_tree_b = encode_sync_op(kind=8, ns="", target="B", field="b",
+                            hlc_bytes=encode_hlc(HLC_WALL, 4, PK_B), ref=encode_opref(TREE_ROOT))
+fjb_tree_a = encode_sync_op(kind=8, ns="", target="A", field="1",
+                            hlc_bytes=encode_hlc(HLC_WALL, 7, PK_B), ref=encode_opref("B"))
+
+snap_body_members = [
+    ((HLC_WALL, 0, PK_A), fjb_pn_a, SK_A, PK_A, {"kind": 5, "target": "stock1", "field": "qty", "value": 5}),
+    ((HLC_WALL, 0, PK_B), fjb_pn_b, SK_B, PK_B, {"kind": 5, "target": "stock1", "field": "qty", "value": -2}),
+    ((HLC_WALL, 1, PK_A), fjb_lww, SK_A, PK_A, {"kind": 3, "target": "doc1", "field": "title", "value": "n"}),
+    ((HLC_WALL, 2, PK_A), fjb_add, SK_A, PK_A, {"kind": 1, "target": "tags", "value": "e1"}),
+    ((HLC_WALL, 3, PK_A), fjb_rga_atom0, SK_A, PK_A, {"kind": 6, "target": "line1", "value": "atom0", "ref": None}),
+    ((HLC_WALL, 4, PK_A), fjb_death, SK_A, PK_A, {"kind": 4, "target": "rec1", "field": "redact"}),
+    ((HLC_WALL, 4, PK_B), fjb_tree_b, SK_B, PK_B, {"kind": 8, "target": "B", "parent": TREE_ROOT, "ord": "b"}),
+    ((HLC_WALL, 5, PK_B), fjb_rga_x, SK_B, PK_B, {"kind": 6, "target": "line1", "value": "X", "ref": "atom0"}),
+    ((HLC_WALL, 6, PK_B), fjb_rga_y, SK_B, PK_B, {"kind": 6, "target": "line1", "value": "Y", "ref": "atom0"}),
+    ((HLC_WALL, 7, PK_B), fjb_tree_a, SK_B, PK_B, {"kind": 8, "target": "A", "parent": "B", "ord": "1"}),
+]
+# Member order is (hlc, op-id) ascending. The root commits to the FOLD, not to these bytes, so the
+# order is NOT a correctness requirement (§5.2: two replicas MAY serialize different valid bodies
+# that fold to the same root); it is fixed so two replicas compacting the same state produce the
+# same bytes and the body dedupes in a content-addressed store instead of forking per replica.
+_snap_body_sorted = sorted(
+    ((h, content_addr(DS_OP_ID, o), cose_sign1(o, sk, pk), o, d)
+     for h, o, sk, pk, d in snap_body_members),
+    key=lambda t: (t[0], t[1]),
+)
+snapshot_body_fj = enc_array([c for _, _, c, _, _ in _snap_body_sorted])
+snapshot_body_fj_ops = [
+    dict(d, hlc={"wall": h[0], "counter": h[1], "author_hex": h[2].hex()},
+         syncop_cbor_hex=o.hex(), op_id_hex=i.hex())
+    for h, i, _c, o, d in _snap_body_sorted
+]
+
+# The OPTIONAL bounded inline copy (key 3): the same SnapshotBody bytes the caller would otherwise
+# fetch from GET /sync/state/<root>. It is a CACHE HINT — verified by FOLDING it and recomputing
+# Snapshot.root exactly as a fetched body is (§6.1.2), and discarded whole on mismatch.
+fastjoin_map_inline = enc_map([(1, snapshot_fj), (2, floor_hlc), (3, enc_bstr(snapshot_body_fj))])
 pull_resp_fastjoin_inline = enc_map([(2, fastjoin_map_inline)])
 
 add(
@@ -1064,6 +1191,15 @@ add(
         "snapshot_sig_ds_tag_hex": DS_SNAPSHOT.hex(),
         "floor_hlc_cbor_hex": floor_hlc.hex(),
         "observable_state_cbor_hex": state_v1.hex(),
+        "observable_state_role": "the COMMITMENT hashed to produce `root` (§6.1.1) — NOT the body, "
+                                 "NOT adoptable, and NOT what key 3 carries (§6.1.2, C-09/C-11).",
+        "snapshot_body_cbor_hex": snapshot_body_fj.hex(),
+        "snapshot_body_ops": snapshot_body_fj_ops,
+        "snapshot_body_op_count": len(snapshot_body_fj_ops),
+        "snapshot_body_role": "the §6.1.2 SnapshotBody — the compacted set of individually-signed "
+                              "ops whose fold reproduces observable_state_cbor_hex, hence "
+                              "snapshot_root_hex. This is what GET /sync/state/<root> serves and "
+                              "what FastJoin key 3 inlines.",
     },
     {
         "snapshot_sig_preimage_hex": (DS_SNAPSHOT + snapshot_fj_body).hex(),
@@ -1076,25 +1212,52 @@ add(
         "ops_key_present": False,
         "state_fetch_endpoint": "GET /sync/state/<root>",
         "state_fetch_address_hex": root_v1.hex(),
-        "inline_state_is_cache_hint_verified_against_root": True,
+        "inline_body_is_cache_hint_verified_by_fold_then_recompute": True,
+        "inline_body_cbor_hex": snapshot_body_fj.hex(),
+        "inline_body_is_an_op_set_not_a_state_document": True,
+        "inline_body_folds_to_root_hex": root_v1.hex(),
+        "inline_state_document_would_be_nonconformant_cbor_hex": enc_map(
+            [(2, enc_map([(1, snapshot_fj), (2, floor_hlc), (3, enc_bstr(state_v1))]))]).hex(),
+        "inline_state_document_note": "the pre-C-09 shape this vector used to freeze, published so "
+                                      "it can be recognized as WRONG rather than copied. A caller "
+                                      "decodes key 3 as a SnapshotBody — an array of COSE_Sign1 — "
+                                      "so det_cbor(ObservableState) fails at op decode (0x0A03); "
+                                      "either way it never folds to `root`, so the body is "
+                                      "discarded and the caller falls back to GET "
+                                      "/sync/state/<root>. A caller that instead ADOPTED it would "
+                                      "be non-conformant per §6.1.2.",
     },
     "§5.2.1 (frozen): the `pull` response is a deterministic-CBOR integer-keyed map whose two keys "
     "are MUTUALLY EXCLUSIVE — {1: ops} is the ordinary answer, {2: FastJoin} is the answer to a "
     "caller below the responder's §6.2 truncation floor. FastJoin = {1: Snapshot, 2: floor Hlc, "
     "?3: inline det_cbor(ObservableState)}. The ENCODING SPLIT is the point: the §6.1 signed "
     "descriptor ships INLINE (it is bounded — sized by the author count, not the data — and it "
-    "carries the signature, `covers` and the `root` commitment), while the UNBOUNDED observable "
-    "state ships BY REFERENCE at Snapshot.root, fetched from GET /sync/state/<root>. By-reference "
+    "carries the signature, `covers` and the `root` commitment), while the UNBOUNDED BODY ships "
+    "BY REFERENCE at Snapshot.root, fetched from GET /sync/state/<root>. By-reference "
     "keeps a sync round's response size bounded and reuses the content-addressing the protocol "
     "already has: the body is immutable and self-verifying, so any relay may cache and pin it, any "
     "holder may serve it, and every peer fast-joining to the same `covers` dedupes to the same "
     "bytes. The cost is one extra round trip on a path taken only when a peer has fallen behind a "
     "truncation cut. Key 3 is an OPTIONAL bounded inline copy (RECOMMENDED ceiling 64 KiB) that "
-    "collapses the small-namespace case to one round trip; it MUST be verified against "
-    "Snapshot.root like any fetched body and discarded on mismatch, so there is ONE verification "
-    "path, not two. The snapshot signature is the §18.1.6 preimage DS-tag || det_cbor(Snapshot \\ "
-    "{8}) with the tag \"DMTAP-SYNC-v0/snapshot\", distinct from the state-root tag "
-    "\"DMTAP-SYNC-v0/snapshot-state\".",
+    "collapses the small-namespace case to one round trip; it MUST be verified exactly as a "
+    "fetched body is and discarded on mismatch, so there is ONE verification path, not two. The "
+    "snapshot signature is the §18.1.6 preimage DS-tag || det_cbor(Snapshot \\ {8}) with the tag "
+    "\"DMTAP-SYNC-v0/snapshot\", distinct from the state-root tag "
+    "\"DMTAP-SYNC-v0/snapshot-state\". "
+    "REGENERATED FOR C-09 (correction C-11): key 3 now carries a §6.1.2 SnapshotBody — the "
+    "compacted set of ten individually-signed ops whose FOLD reproduces the observable state and "
+    "hence `root` — where it previously carried det_cbor(ObservableState), the one value §6.1.2 "
+    "says a caller must NOT adopt. C-09 recorded that this vector's bytes were unaffected because "
+    "key 3 is absent, which is true of `pull_response_cbor_hex` and FALSE of "
+    "`pull_response_with_inline_state_cbor_hex`, which the vector also carries and froze: a frozen "
+    "vector was pinning an unadoptable value. Verification of key 3 is therefore "
+    "FOLD-THEN-RECOMPUTE (§6.1.2), not a hash of the transferred bytes — the body is not required "
+    "to be byte-stable across producers, only to fold to `root`. The body is the §6.2 RETENTION "
+    "SET for this state: one uncancelled set-add, the winning lww-set, BOTH counter deltas (no "
+    "counter op is ever superseded — C-13), the winning death certificate, all three live RGA "
+    "inserts, and the winning tree-move per node. `snapshot_body_ops` lists each op with its "
+    "op-id; member order is (hlc, op-id) ascending, which is a determinism convenience for "
+    "content-addressed caching and NOT a conformance requirement.",
 )
 
 # Caller B is AT/ABOVE the floor: its vector dominates everything in `covers`, so the surviving
@@ -1415,7 +1578,22 @@ out = {
     "survived a frozen vector; C-07 removes §5.2.1's unverifiable 'floor MUST NOT exceed covers' clause "
     "(a category error: a single Hlc vs a per-author VersionVector) in favour of §5.2.2's explicit split "
     "between what a caller verifies and what it trusts, and freezes the rejected `covers.lacks(floor)` "
-    "predicate here alongside the data on which it wrongly fires.",
+    "predicate here alongside the data on which it wrongly fires. "
+    "C-11..C-14 keep the count at 24. C-11 REGENERATES SYNC-FJ-01's inline FastJoin body: C-09 said "
+    "making the body an op set left this vector's bytes alone because key 3 is absent, which is true "
+    "of pull_response_cbor_hex and FALSE of pull_response_with_inline_state_cbor_hex — the vector was "
+    "freezing, as key 3, the one value §6.1.2 says a caller must not adopt. Key 3 now carries a real "
+    "SnapshotBody (ten signed ops = §6.2's retention set for this state, folding to the UNCHANGED "
+    "root); the old state-document framing is kept as a labelled non-conformant artifact. C-12 and "
+    "C-13(a) widen §6.2's retention set (a winning `Live` death cell, a retained tombstoned origin's "
+    "own seq-remove, and EVERY counter op — no counter delta is ever superseded) and are vectored "
+    "only indirectly, by SYNC-SNAP-03's fold-then-recompute, which is the check that catches a body "
+    "missing any of them. C-13(b) adds §4.1.2's `sync-1/ext-value-2` sub-token — the mechanism C-08's "
+    "mixed-deployment warning lacked — recorded here as ADVISORY: absence means unknown, never "
+    "profile 1, and a node MUST NOT refuse or downgrade on it. C-14 extends SYNC-VAL-01 with the "
+    "empty map 0xa0 (key-type-ambiguous but vacuously so, and legal, so it MUST be accepted) and the "
+    "empty array 0x80, and freezes the nesting-depth ceiling at 64 as a MUST covering ALL sync "
+    "decoding rather than `value` alone.",
     "vectors": vectors,
 }
 print(json.dumps(out, indent=2))

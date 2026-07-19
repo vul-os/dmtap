@@ -348,5 +348,22 @@ both sides, including a depth-2 reject that pins validation as recursive. **C-10
 death-certificate-vs-LWW selection guidance) adds no vector — `SYNC-DEATH-01` already pins the
 domination it warns about. None of the previously frozen bytes changed.
 
+**C-11…C-14** keep the count at **24** and come from the implementation of C-08/C-09. **C-11** is a
+regeneration rather than a new vector: C-09 recorded that making the body an op set left `SYNC-FJ-01`
+alone "because key `3` is absent", which is true of that vector's `pull_response_cbor_hex` and false
+of the `…_with_inline_state_…` variant it also carries — so a frozen vector was pinning, as the
+inline body, the one value §6.1.2 says a caller must not adopt. Key `3` now carries a real
+`SnapshotBody` folding to the unchanged `root`, and the old framing is kept as a labelled
+non-conformant artifact. **C-12**/**C-13(a)** widen `SYNC.md` §6.2's retention set (a winning `Live`
+death cell; a retained tombstoned RGA origin's own `seq-remove`; **every** PN-counter op, since no
+counter delta is ever superseded) and are vectored only indirectly, by `SYNC-SNAP-03`'s
+fold-then-recompute — the check that catches a body missing any of them. **C-13(b)** adds the
+`sync-1/ext-value-2` sub-token C-08's mixed-deployment warning lacked, specified as **advisory**:
+absence means "unknown", never "old", and no node may refuse or downgrade on it. **C-14** extends
+`SYNC-VAL-01` with the empty map `0xa0` (key-type-ambiguous but vacuously so, and legal, so it MUST
+be accepted) and the empty array, and fixes the nesting-depth ceiling at **64** as a MUST covering
+all sync decoding. Again no previously frozen byte changed, apart from the C-11 artifact that was
+the defect.
+
 This section is listed here only for discoverability; `SYNC.md` §10, not
 this README, is normative for what each vector proves.
