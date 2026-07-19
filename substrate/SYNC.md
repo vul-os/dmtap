@@ -134,10 +134,91 @@ OpRef  = { 1 => tstr, ? 2 => Hlc }   ; a reference to another element by (target
 cv     = ext-value                    ; the deterministic-safe value subset of §18.3.6
 ```
 
-- `value` is restricted to the **`ext-value` subset** (§18.3.6): text, byte strings, unsigned/negative
-  integers, booleans, and homogeneous arrays thereof — **no** integer-keyed maps, floats, tags, or
-  `null`, so a value can never smuggle an un-canonicalizable or ambiguous encoding (the §5.6
+- `value` is **exactly the §18.3.6 `ext-value` type**, no narrower:
+
+  ```cddl
+  ext-value = bool / int / bytes / tstr / [* ext-value] / { * tstr => ext-value }
+  ```
+
+  — booleans, unsigned/negative integers, byte strings, text strings, **arrays of `ext-value`
+  (heterogeneous permitted), and text-keyed maps of `ext-value`, both recursively**. Excluded are
+  **floats, tags, `null`/`undefined`, and integer-keyed maps** (`ext-value` has no integer-keyed-map
+  arm), so a value can never smuggle an un-canonicalizable or ambiguous encoding (the §5.6
   `is_ext_value` rule). A violating op is rejected (`ERR_SYNC_OP_INVALID`, `0x0A03`).
+  - **Nesting is deterministic-safe, and already load-bearing elsewhere.** A text-keyed map is
+    canonicalized by §2.2 exactly as an integer-keyed one is — keys sorted ascending by *encoded key
+    bytes*, duplicates forbidden, definite lengths — applied recursively at every depth. This is not a
+    new risk being taken here: §18.3.6's `Headers.ext` carries the same recursive type **inside a
+    signature preimage** on every MOTE, so the encoding has to be reproducible already. A decoder MUST
+    validate `ext-value` recursively and MUST reject at the first violating node rather than
+    canonicalizing on a guess.
+  - **Depth is bounded by the transport, not by this type.** `ext-value` is defined recursively and
+    therefore places no depth limit of its own; an implementation MUST apply its ordinary
+    deterministic-CBOR nesting-depth ceiling while validating, and reject an over-deep value as
+    `0x0A03` rather than recursing without bound. A value's *encoded size* is bounded by the op-size
+    limit (§16-class), which bounds depth in practice.
+  - **This corrects a narrowing (§14 C-08).** Earlier text of this bullet described `ext-value` as
+    "text, byte strings, integers, booleans and **homogeneous arrays** thereof," silently dropping
+    §18.3.6's map arm and adding a homogeneity constraint §18.3.6 does not have — while still calling
+    the result "the `ext-value` subset (§18.3.6)". Two types under one name is exactly the defect that
+    makes a consumer's data un-encodable for no reason; see §4.1.1 for what nesting does and does not
+    buy.
+
+### 4.1.1 Value shape — nesting, opacity, and where the merge boundary is (normative guidance)
+
+`ext-value` can now express a nested application object. **It still does not make that object mergeable.**
+This subsection exists because those two facts are easy to conflate, and conflating them costs writes.
+
+**The merge unit is the whole `value`.** §4.4 resolves an LWW register by comparing the two ops' HLCs and
+keeping the winner's `value` *entire*. Nothing in §4 descends into a value: there is no per-key merge of
+two nested maps, no per-element merge of two arrays. A nested `{x: 10, y: 20}` and a concurrent
+`{x: 10, y: 99}` do not merge to `{x: 10, y: 99}` by field — one op wins and the other is discarded whole,
+identically to two opaque strings. Structure inside a value is **representation**, not semantics.
+
+**Granularity lives in the address space.** The substrate's nesting mechanism is `(ns, target, field)`,
+not the value. A product that wants two authors to edit *different parts of the same object*
+concurrently without clobbering each other MUST decompose those parts into distinct addresses — one
+register per independently-editable leaf — because that is the only decomposition the algebra sees:
+
+```
+  slide:s1 / obj:shape-a  →  the shape's state        ; concurrent edits to shape-a and shape-b
+  slide:s1 / obj:shape-b  →  the other shape's state  ; both survive: different registers
+  slide:s1 / s:title      →  a scalar
+```
+
+Collapsing that into a single register holding one big nested map is a *regression* in merge behaviour,
+and one the encoder will not warn you about: it converts "both edits survive" into "last writer wins the
+whole slide". **Choose the address decomposition to match the concurrency you want to survive; then the
+value shape is free.**
+
+**So which representation, when.** Both are conformant; pick on this axis:
+
+| Use | When | Cost |
+|---|---|---|
+| **Native nested `ext-value`** | The object is genuinely edited as a unit, *and* you want the protocol to canonicalize it, hash it reproducibly, and let a generic tool inspect it without product knowledge. | Encoder must validate recursively; slightly larger validator surface. |
+| **Opaque payload** (`tstr` of JSON, or `bstr` of any format) | The value has a shape the protocol should not model at all — a foreign format, a versioned application struct with its own evolution rules, a pre-existing serialization you must round-trip byte-exactly. | **You own canonicalization.** See the obligation below. |
+
+Neither is "the CRDT-native one": there is no such thing at this boundary, because the boundary does not
+merge. **Prefer native nesting when the content is yours and structured**, because it makes the bytes
+deterministic by construction; **prefer an opaque payload when the content is foreign or must round-trip
+unchanged**, and accept that the substrate is then blind to it by design.
+
+- **The opaque-payload obligation (normative).** A producer that carries an opaque payload MUST
+  serialize it **canonically** — a fixed, documented, deterministic encoding for a given logical value
+  (canonical JSON with sorted keys, or better, `det_cbor` in a `bstr`). This is not tidiness: §4.4's
+  exact-HLC-tie rule breaks by comparing `det_cbor(value)` **bytes**, and §6.1.1 sorts sections by
+  those bytes. A producer whose serializer varies key order for equal content makes the tie-break
+  depend on the serializer rather than on the data, and makes two byte-different ops that mean the
+  same thing indistinguishable from two that do not. The substrate cannot check this for you — an
+  opaque payload is opaque — which is precisely why it is stated as an obligation on the producer.
+- **There is no `null`, deliberately.** `ext-value` excludes `null`, so "this register holds nothing"
+  and "this register holds the empty string" are not distinguishable by the value type alone. This is
+  not an omission to be worked around with a sentinel encoding chosen ad hoc: a product that needs the
+  distinction MUST make it **explicit and self-describing** in its own value shape — a one-byte/one-char
+  discriminator prefix on an opaque payload (`"v"+text` for set, `"x"` for cleared), or a native map
+  with an explicit presence key (`{"set": true, "v": "…"}`). Both are conformant; what is prohibited is
+  inferring emptiness from a value the algebra treats as an ordinary write. See §4.10, which is where
+  the *choice of primitive* for "cleared" is decided — and where getting it wrong loses data silently.
 - **Authenticity: each `SyncOp` is COSE-signed.** The wire object is a **`COSE_Sign1`** (RFC 9052) whose
   payload is `det_cbor(SyncOp)` and whose protected header binds the signer's author key; the DS-tag
   `DMTAP-SYNC-v0/op ‖ 0x00` domain-separates the signing preimage (§18.1.6). The signature MUST verify
@@ -351,6 +432,62 @@ referenced *from* CRDT state (an LWW value or an RGA atom MAY carry a content ha
 fetched and self-verified by the Feeds/blob path ([`FEEDS.md`](FEEDS.md), §5.5). Sync moves the *pointers*
 deterministically; the content layer moves the *bytes* by content address.
 
+### 4.10 Choosing the right primitive (normative guidance)
+
+Every kind in §4.2 converges. That is not the hard part. The hard part is that **two different kinds can
+both look like the operation you are modelling, converge perfectly, and disagree about what the user
+sees** — and the wrong choice does not raise an error, it loses a later write and reports success. This
+subsection is here because that has now happened to a real consumer, and the trap is not visible from the
+per-kind sections when you read them one at a time.
+
+**The trap: "delete" is two different operations.** §4.5's death certificate and a §4.4 LWW write of an
+empty value are both spelled "delete" in a product's UI. They are not interchangeable:
+
+| | §4.5 `death` (kind 4) | §4.4 `lww-set` of an empty/cleared value (kind 3) |
+|---|---|---|
+| Semantics | **Remove-wins. Dominates.** | Ordinary last-writer-wins. |
+| A later ordinary write | **Does not revive.** A `set-add`/`lww-set` at *any* HLC, however much later, is outranked (the D3 invariant, §4.5). | **Revives.** Greater HLC wins as usual. |
+| Undoing it | Requires an explicit `Live` write with a strictly greater HLC — a distinct, deliberate operation. | Is just the next write. Nothing special. |
+| Right when | Removal is **permanent and policy-bearing**: a redaction, an expiry, a deleted document, a revoked member. The whole point is that a concurrent benign edit must not resurrect it. | Removal is an **ordinary edit that happens to be to an empty value**: clearing a field, blanking a cell, unsetting an optional attribute. |
+
+**The worked example (both halves, from one consumer).** A spreadsheet and a slide deck, in the same
+product, chose *differently* — correctly:
+
+- **Clearing a spreadsheet cell is NOT a death certificate.** Select a cell, press Delete, type a new
+  value: the value comes back. That is plain LWW. Modelling the clear as `death(target=cell)` converges
+  fine and looks right in every test that only clears — and then **silently swallows the next edit into
+  that cell, forever**, because the death certificate dominates the subsequent `lww-set` no matter how
+  much later it is. The user types, the op is minted, signed, replicated, and applied by every replica,
+  and the cell stays empty on all of them. There is no error to catch, no divergence to alarm on: every
+  replica agrees on the wrong answer. The correct mapping is `lww-set` with an explicit "cleared" value
+  (§4.1.1's discriminator rule, since `ext-value` has no `null`).
+- **Deleting a slide IS a death certificate.** A deleted slide never comes back; the product has no
+  operation that revives one. Here the domination is exactly the property you want: a peer that was
+  concurrently *reordering* that slide must not resurrect it, and §4.5 guarantees it cannot. Modelling
+  this as an LWW "deleted: true" flag would be the mirror-image bug — a concurrent move at a greater HLC
+  would bring the slide back.
+
+**The selection test.** Ask, of the product's own behaviour, not of the wire: *"is there any user action
+that restores this thing, using the same ordinary operation that created it?"*
+
+- **Yes → §4.4 LWW** (or §4.3 OR-Set remove). The removal is an edit. Use a discriminated empty value.
+- **No — restoring it, if possible at all, is a distinct privileged operation → §4.5 `death`.**
+
+**Why this is stated as a MUST-read rather than left to taste.** Choosing §4.5 where §4.4 belongs is
+**silent, permanent, and converged data loss** — the worst failure shape this document can produce,
+because every safeguard in it (signatures, canonical encoding, root comparison, divergence alarms) is
+working correctly and confirming the loss. Choosing §4.4 where §4.5 belongs is a **resurrection** bug: the
+redaction that §4.5 exists to make durable can be undone by a concurrent benign edit, which is the exact
+hole §4.5's D3 invariant was written to close. An implementation MUST document, per modelled object,
+which of the two it chose and the answer to the selection test above; a product that cannot state the
+answer has not made the choice, it has stumbled into one.
+
+**The same shape recurs across the other kinds.** The general rule is that **domination and ordering are
+different properties, and only one of them is a clock**: `death` dominates regardless of HLC; LWW obeys
+the HLC; the OR-Set is add-wins by *tag observation*, not by clock; and §4.8's cycle rule is decided by
+ordered replay rather than by which move is later (which is why §4.8 says so explicitly). If your mental
+model is "the later write wins," it is correct for exactly one of the six kinds.
+
 ---
 
 ## 5. Reconciliation wire protocol
@@ -388,7 +525,7 @@ GET  /sync/vector                → { node: ik-pub, ns: [tstr], vector: Version
 POST /sync/pull   { vector, ns } → { ops: [ COSE_Sign1(SyncOp) | SyncFrame ] }   ; ops the caller lacks
                                  | { fast-join: FastJoin }                       ; caller is below the §6.2 cut
 POST /sync/ops    { ops }        → { applied: u32 }                              ; push ops to the peer
-GET  /sync/state/<root>          → det_cbor(ObservableState)                     ; §6.1.1 body by content address
+GET  /sync/state/<root>          → det_cbor(SnapshotBody)                       ; §6.1.2 body, addressed by `root`
 ```
 
 - **`GET /sync/vector`** returns the responder's node key, the namespaces it subscribes to, and its
@@ -398,12 +535,25 @@ GET  /sync/state/<root>          → det_cbor(ObservableState)                  
   op's author (or whose author is absent from the vector). (flowstock: `OpsAfter(vector, batch)`.) If the
   caller's vector is **below the responder's §6.2 truncation floor**, the responder answers `fast-join`
   instead of `ops` — never a partial suffix (§5.2.1, a MUST).
-- **`GET /sync/state/<root>`** returns the `det_cbor(ObservableState)` (§6.1.1) whose §18.1.5 content
-  address is `<root>`. It is a plain content-addressed fetch: immutable, self-verifying (the fetcher
-  recomputes `root` over the returned bytes), and therefore cacheable and pinnable by any intermediary
-  without trusting it — the same posture as a §22 public object, and served for free by the existing
-  relay cache/pin role. It carries **no** authority of its own: bytes are only adopted when they hash to
-  the `root` of a snapshot that verified under §6.1.
+- **`GET /sync/state/<root>`** returns the `det_cbor(SnapshotBody)` (§6.1.2) — the compacted **op set**
+  whose fold reproduces the observable state committed by `<root>`. It is a content-**keyed** fetch:
+  immutable and cacheable/pinnable by any intermediary without trusting it, the same posture as a §22
+  public object, served for free by the existing relay cache/pin role. Two honest notes on the
+  difference from an ordinary §18.1.5 fetch, since the address is *not* the hash of the returned bytes:
+  - **Verification is by recomputation, not by direct hashing.** The fetcher ingests the body, derives
+    `ObservableState` per §6.1.1, hashes it, and requires equality with `<root>` (§6.1.2). This is
+    strictly stronger than hashing the transfer bytes — it proves the ops *produce* the committed state
+    — and it is why `<root>` remains the right address: it names the thing being committed to, not an
+    encoding of it.
+  - **An intermediary can cache but not validate.** A relay keyed on `<root>` serves bytes it cannot
+    check, so a corrupt or substituted body is caught at the fetcher rather than at the cache. That is
+    already the trust posture of this endpoint — it carries **no** authority of its own, and bytes are
+    only adopted when they reproduce the `root` of a snapshot that verified under §6.1 — and it costs
+    the fetcher a discarded body, never a corrupted state.
+  - The body is **not** required to be byte-stable across producers: two replicas at the same `covers`
+    MUST agree on `root`, but MAY serialize different (equally valid) bodies that fold to it — e.g.
+    choosing different uncancelled add-tags for a present OR-Set element. Cache keys are therefore
+    correct-but-non-unique, which is sound because the fetcher validates by fold.
 - **`POST /sync/ops`** pushes a batch; the responder applies each op that is new (dedup by op content
   hash / `hlc`), verifying signature (§4.1) and CRDT validity (§4) before apply, and returns the count of
   **newly** applied ops. Apply is idempotent: a re-pushed op is a no-op (matching flowstock's
@@ -469,13 +619,16 @@ PullResponse = { 1 => [ COSE_Sign1(SyncOp) | SyncFrame ] }   ; ops — the ordin
 FastJoin = {
   1 => Snapshot,       ; the §6.1 signed snapshot that replaced the truncated prefix
   2 => Hlc,            ; floor   the §6.2 cut in force at the responder (the caller's audit handle)
-  ? 3 => bstr,         ; state   OPTIONAL inline det_cbor(ObservableState); see below
+  ? 3 => bstr,         ; body    OPTIONAL inline det_cbor(SnapshotBody) (§6.1.2); see below
 }
 ```
 
-Key `1`'s members are framed per §5.2's **op-framing** rule: each `COSE_Sign1`/`SyncFrame` is embedded as
-a **CBOR item**, never `bstr`-wrapped. Key `3` is the one `bstr` here, and deliberately so — it is an
-opaque, hash-addressed body, not a signed structure (§5.2's seam).
+`PullResponse` key `1`'s members are framed per §5.2's **op-framing** rule: each `COSE_Sign1`/`SyncFrame`
+is embedded as a **CBOR item**, never `bstr`-wrapped — and the same rule governs the ops *inside* a
+`SnapshotBody`, since it is an ops collection like any other. `FastJoin` key `3` is nonetheless a `bstr`,
+and deliberately so: it wraps the **whole** body as one hash-addressed unit, the alternative to a separate
+`GET`, so it ships as the opaque body §5.2's seam assigns to a `bstr` rather than as a second op array
+spliced into the response. A decoder unwraps it once and then decodes an ordinary ops array inside.
 
 The two keys are **mutually exclusive** — a response carrying both, or neither, is malformed (`0x0A03`). A
 responder that never truncates never emits key `2`, so the baseline is unchanged for every replica that
@@ -489,8 +642,8 @@ keeps a complete journal.
 - **The signed descriptor ships inline** (key `1`). It must — it is what carries the signature, the
   `covers` vector and the `root` commitment, and it is what makes the response self-describing. It is
   bounded, so it cannot blow up the response.
-- **The state body ships by reference** (`Snapshot.root`, fetched from `GET /sync/state/<root>`). This is
-  the unbounded part — a namespace's entire observable state, potentially megabytes — and putting it in
+- **The body ships by reference** (`Snapshot.root`, fetched from `GET /sync/state/<root>`). This is
+  the unbounded part — a namespace's entire live op set, potentially megabytes — and putting it in
   the `pull` response would make an ordinary sync round's response size unbounded and un-resumable, on a
   path whose batch limit exists precisely to bound it. By-reference instead **reuses infrastructure the
   protocol already has for free**: the body is content-addressed (§18.1.5) and immutable, so it is
@@ -499,12 +652,12 @@ keeps a complete journal.
   peer fast-joining to the same `covers`. The cost is honest and small: one extra round trip, on a path
   taken only when a peer has fallen behind a truncation cut — a rare, already-expensive event — never on
   the steady-state sync round.
-- **Inline is retained as a bounded optimization** (key `3`, OPTIONAL). A responder MAY include the state
+- **Inline is retained as a bounded optimization** (key `3`, OPTIONAL). A responder MAY include the body
   bytes when they are small (a deployment-set ceiling; `64 KiB` is the RECOMMENDED default), collapsing
-  the common small-namespace case back to one round trip. A caller **MUST** verify key `3` by hashing it
-  to `Snapshot.root` exactly as it would a fetched body, and **MUST** discard it and fetch by reference on
-  mismatch — the inline copy is a cache hint, never a second source of truth. This keeps one verification
-  path, not two.
+  the common small-namespace case back to one round trip. A caller **MUST** verify key `3` exactly as it
+  would a fetched body — by folding it and recomputing `root` (§6.1.2) — and **MUST** discard it and fetch
+  by reference on mismatch. The inline copy is a cache hint, never a second source of truth. This keeps
+  one verification path, not two.
 
 **What the caller does (normative).** On receiving `fast-join`, a replica MUST, in order:
 
@@ -514,15 +667,21 @@ keeps a complete journal.
 2. **Check what is checkable about `covers` and `floor`** — per §5.2.2, which states exactly which
    part of "the snapshot covers what I am missing" a caller can verify and which part it must trust.
    `covers` MUST be a well-formed, non-empty §5.1 `VersionVector`; a malformed one is `0x0A03`.
-3. **Obtain and verify the state body** — key `3` if present and hashing to `root`, else
-   `GET /sync/state/<root>` from the responder or any holder — recompute
-   `0x1e ‖ BLAKE3-256("DMTAP-SYNC-v0/snapshot-state" ‖ 0x00 ‖ det_cbor(ObservableState))` and require it to
-   equal `Snapshot.root` (`0x0A09` on mismatch). If no holder can serve it, `0x0A0C` and the round fails
-   **closed** — the caller keeps its old vector rather than half-adopting.
-4. **Adopt it as base state** per §6.1's fast-join semantics (adopt the observable state, set the local
-   vector to `covers`), under the deployment's declared §6.1 snapshot **trust policy** — this path does
-   not create a new trust posture, it uses that one, including the verify-required deployment's later
-   backfill-and-recompute obligation.
+3. **Obtain and verify the body** — key `3` if present, else `GET /sync/state/<root>` from the responder
+   or any holder. The body is a **`SnapshotBody`**: a compacted set of signed ops, **not** a state
+   document (§6.1.2). Verify it by **ingesting it and recomputing** — each op through the ordinary §4
+   path (signature, `ext-value`, CRDT validity), then derive `ObservableState` per §6.1.1 and require
+   `0x1e ‖ BLAKE3-256("DMTAP-SYNC-v0/snapshot-state" ‖ 0x00 ‖ det_cbor(ObservableState))` to equal
+   `Snapshot.root` (`0x0A09` on mismatch, and the body is discarded **whole**). Ingest into a
+   **provisional** replica state, not the live one, so a body that fails to reproduce `root` leaves
+   nothing behind. If no holder can serve it, `0x0A0C` and the round fails **closed** — the caller keeps
+   its old vector rather than half-adopting.
+4. **Adopt** — promote the provisional state and set the local vector to `covers` — under the
+   deployment's declared §6.1 snapshot **trust policy**. This path does not create a new trust posture,
+   it uses that one, including the verify-required deployment's later backfill-and-recompute obligation.
+   Note that because the body is *ops*, adoption is a **merge**: a caller that already holds some of
+   those ops deduplicates them by `op-id` (§5.2) rather than being reset by them, and re-adopting the
+   same body is a no-op.
 5. **Continue pulling above the floor** — re-issue `POST /sync/pull` with the new vector (`covers`), which
    is now at or above the responder's floor, and the ordinary `ops` answer completes the join. Fast-join
    replaces the *truncated prefix*, never the suffix. **Fast-join MUST make progress:** if that re-pull
@@ -663,10 +822,11 @@ Snapshot = {
   DS-tags, one for the state-root hash preimage and one for the signature preimage, so the two can never
   be confused. Two replicas at the same `covers` vector **MUST** compute the same `root`; a mismatch is
   `ERR_SYNC_SNAPSHOT_ROOT_MISMATCH` (`0x0A09`) and is evidence of divergence (HALT_ALERT).
-- **Fast join (the point).** A joining replica fetches a `Snapshot`, adopts its observable state, sets its
-  local vector to `covers`, and then pulls **only the ops after `covers`** (§5.2) — it never replays the
-  pre-snapshot history. Because `root` is recomputable, a replica that later backfills the pre-snapshot
-  ops **MUST** recompute `root` and confirm it matches — a snapshot is **verifiable, not merely trusted**.
+- **Fast join (the point).** A joining replica fetches a `Snapshot`, **ingests its body — a compacted set
+  of ops (§6.1.2), not a state document** — sets its local vector to `covers`, and then pulls **only the
+  ops after `covers`** (§5.2). It never replays the pre-snapshot history. Because `root` is recomputable,
+  a replica that later backfills the pre-snapshot ops **MUST** recompute `root` and confirm it matches — a
+  snapshot is **verifiable, not merely trusted**.
 - **Trust posture (honest).** A replica that adopts a snapshot *without* backfilling trusts the `signer`
   for the pre-`covers` history until it verifies. A deployment therefore fixes a **snapshot trust
   policy**: (a) *verify-required* — accept a snapshot only from a signer whose `root` the replica can
@@ -724,6 +884,79 @@ tree  = [ * [ node: tstr, parent: tstr, ord: tstr ] ]    ; each non-root node's 
   post-`covers` ops yields the same `ObservableState` bytes as a full replay.
 - **Movable-tree root sentinel.** The reserved tree-root node id is the **empty string `""`**; it never
   appears as a `node` entry (the root has no parent edge), only as the `parent` value of a top-level node.
+- **`ObservableState` is a commitment and a comparison object — it is NOT an import format.** It is what
+  you hash to get `root`, and what two replicas compare to prove convergence. It is deliberately
+  **lossy**: it drops precisely the merge metadata a replica needs in order to keep merging. Adopting it
+  as a base state and continuing to apply ops is **unsound**, not merely unsupported — see §6.1.2, which
+  specifies what is actually transferred and adopted.
+
+### 6.1.2 The snapshot body is a compacted op set, not a state document (normative — `SYNC-SNAP-03`)
+
+**The rule.** What a replica transfers and adopts at fast-join is a **`SnapshotBody`**: the minimal set of
+**canonical, individually-signed ops** whose fold equals the snapshot's observable state.
+
+```cddl
+SnapshotBody = [ * ( COSE_Sign1(SyncOp) / SyncFrame ) ]   ; framed per §5.2's op-framing rule
+```
+
+It is served by `GET /sync/state/<root>` and MAY ride inline in `FastJoin` key `3` (§5.2.1). A replica
+adopts it by **ingesting every member through the ordinary op path of §4** — same signature check, same
+`ext-value` validation, same CRDT apply, same `op-id` dedup. There is no second ingest path, no "load
+state" entry point, and this document does not define one.
+
+**Why not just ship `ObservableState`.** Because it cannot be resumed from. §6.1.1 serializes only the
+*observable projection* — that is exactly what makes `root` a clean equality object, and exactly what
+makes it useless as a base state. Every kind loses the field that decides the next merge:
+
+| Kind | Dropped by §6.1.1 | What breaks if you adopt the projection anyway |
+|---|---|---|
+| §4.4 LWW | the winning cell's **HLC** | A post-`covers` op's HLC has no incumbent to compare against. It is **not** automatically greater: `covers` bounds each author's *own* stream, and the HLC is a **total order across authors**, so an op above `covers[B]` can still be *below* the winning cell written by `A`. A full replayer keeps `A`; a projection-adopter overwrites with `B`. **Silent divergence, and the two replicas' roots differ forever.** |
+| §4.5 `death` | the certificate's **HLC** | §4.5 revives only on a `Live` write with a *strictly greater* HLC. With no HLC there is nothing to be greater than: revival becomes either always-allowed or never-allowed, and the D3 invariant is unenforceable. |
+| §4.3 OR-Set | the **add-tags** | A post-`covers` `set-remove` cancels *specific* add-tags. If the adopter never had them, the remove cancels nothing and the element stays present — add-wins degenerates into add-always. |
+| §4.7 RGA | **element ids** and tombstones | A post-`covers` `seq-insert` names its left-origin by element id, and `seq-remove` names its target the same way. With ids gone, both reference elements the adopter cannot identify; §4.7's causal-readiness buffer then waits forever for an origin that already arrived. |
+| §4.6 PN-counter | per-author `op-id`-keyed deltas | The *total* survives, so counters are the one kind a projection-adopt gets right — until a below-`covers` op arrives out of order by any path, at which point it is double-counted, because the `op-id` set that made §4.6's merge idempotent is gone (§14 C-01 is the same bug in a different disguise). |
+
+So the engine is a **fold over ops, and only a fold over ops.** That is not an implementation limitation
+that a richer state format would lift; it is what makes the merge functions total and the algebra
+associative. A conforming implementation is not required to expose a state-import entry point, and one
+that exposes none is **not** thereby incomplete.
+
+**What the body verifies against.** `Snapshot.root` still commits to `det_cbor(ObservableState)` (§6.1.1,
+unchanged — the hash, the DS-tag and every frozen byte of it stand). A caller therefore verifies a body by
+**folding it and recomputing**, not by hashing the received bytes directly:
+
+```
+  ingest every op in SnapshotBody  →  derive ObservableState per §6.1.1  →  hash  ≟  Snapshot.root
+```
+
+A mismatch is `ERR_SYNC_SNAPSHOT_ROOT_MISMATCH` (`0x0A09`) and the body MUST be discarded whole. This is
+**strictly stronger** than hashing an opaque state blob: it proves the ops actually reproduce the
+committed state, rather than proving only that someone shipped the bytes they promised. It also shrinks
+the §6.1 *trusted-checkpoint* residual, because every op in the body is independently COSE-signed under
+§4.1 — a malicious signer can **omit** ops (a withholding attack, already detectable as a vector that
+never advances, §5.2) but **cannot forge** one, so a "false starting state" is now bounded to a *subset*
+of the true history rather than an arbitrary fabrication.
+
+**The cost, honestly.** A body is larger than the projection it folds to — it carries an HLC, an author,
+and a signature per surviving element, where the projection carries a bare value. That is the price of
+resumability and it is not optional: the dropped bytes *are* the merge metadata. Where size matters, the
+lever is §4.1's `SyncFrame` batching (one signature amortized over many ops), not a leaner state format.
+
+**Guidance for a consumer whose storage is state-shaped.** Most products persist a *document*, not a
+journal, and will reach for "save the state, load the state." The mapping is mechanical, and the
+consumer that first hit this arrived at it independently:
+
+1. **Keep the winning op per address, not the winning value.** Maintain, alongside your rendered state,
+   the op bytes that produced each live element (one per LWW `(target, field)`; one per live OR-Set
+   element; the certificate per deleted object; the insert per live RGA atom; the winning move per tree
+   node). This map *is* your snapshot body.
+2. **Order it with the engine's comparator, never a re-implemented one.** Deciding "which op is winning"
+   with a locally-written HLC comparison reintroduces the divergence the shared engine exists to remove.
+3. **"Save" = serialize that op set. "Load" = ingest it.** Loading is not a replace, it is a **merge** —
+   ingesting a saved body into a session that already holds ops is safe and idempotent by construction
+   (`op-id` dedup, §5.2), which a state-replace would not be.
+4. **Your storage layer need not change shape.** A document-shaped store holds the body as one opaque
+   blob; the fold happens on load. What changes is only *what you put in the blob* — ops, not values.
 
 ### 6.2 Compaction via stability cut (grounded in §5.6)
 
@@ -750,6 +983,24 @@ advanced past them**, so no future op can depend on them:
   or that simply never advanced) is served by **§5.2.1 fast-join**, which is what makes truncation safe
   rather than merely permitted: the peer recovers via the snapshot, and the responder is forbidden from
   answering it with a bare suffix.
+- **Body-retention obligation (normative).** Because a snapshot's body is a set of *ops* (§6.1.2), a
+  truncating replica MUST retain every op that body needs — truncation removes **superseded** history,
+  never **live** history. Concretely, the following are retained below the floor, and the rest of the
+  prefix MAY be dropped:
+  - the winning `lww-set` per live `(target, field)`, and the winning `death` per deleted object;
+  - at least one uncancelled `set-add` per present OR-Set element (a tag cancelled by a tombstone is
+    droppable *with* its tombstone, exactly as the first compaction bullet already says);
+  - the winning `tree-move` per node still in the tree;
+  - every live RGA atom's `seq-insert`, **plus, transitively, the `seq-insert` of any tombstoned atom
+    that is the left-origin of a retained atom.** This is the one non-obvious case: §4.7 already
+    requires tombstones to be retained "until GC, so a concurrent insert whose origin is a removed atom
+    still resolves," and the same reasoning binds here — dropping a tombstoned origin strands its
+    successors in the causal-readiness buffer of every replica that fast-joins from the body, which
+    presents as a sequence that silently never converges rather than as an error.
+
+  A replica that cannot satisfy this retention set MUST refuse the truncation whole rather than perform
+  it partially, on the same fail-closed footing as the accounting obligation below. **A replica that
+  never truncates has no obligation here** — its complete journal is trivially a superset of any body.
 - **The floor is not comparable to `covers`, and the accounting obligation is not a comparison.** The
   floor is a single `Hlc` (a point in the §3 total order); `covers` is a per-author `VersionVector`. "The
   snapshot accounts for every op dropped" is a statement quantified over **ops**, not a relation between
@@ -774,7 +1025,8 @@ own branch.
   two peers' subscriptions; a namespace the caller did not subscribe to is never shipped to it.
 - The `VersionVector`, snapshots, and stability cut are all **per-namespace**: convergence, anti-rollback,
   and compaction are sound *within* each namespace independently. A replica that later widens its
-  subscription bootstraps the new namespace via its snapshot + post-snapshot ops (§6).
+  subscription bootstraps the new namespace via that namespace's snapshot **body** + post-snapshot ops
+  (§6.1.2) — the same op-ingest path as an ordinary sync round, never a state import.
 - **Causal soundness across the boundary (normative).** An op MUST be causally self-contained within its
   namespace: an RGA `ref` or tree `parent` MUST name a `target` in the **same** `ns`, and a
   cross-namespace reference is `ERR_SYNC_NS_LEAK` (`0x0A0A`). This keeps a sparse subscriber from needing
@@ -991,6 +1243,10 @@ and how it was found.
 
 | **C-06** | **Op framing inside an `ops` array pinned to item-embedded, never `bstr`-wrapped (§5.2, new bullet; restated at §5.2.1).** §5.2/§5.2.1 wrote `{1 => [ COSE_Sign1(SyncOp) \| SyncFrame ]}`, which two implementations read two ways: a `COSE_Sign1` *is* an array, so embedding it directly as an array item is one defensible reading, and `bstr`-wrapping each op (the habit from formats that must preserve nested bytes) is another. Both readings survived because nothing in the text ruled either out. The decision is **item-embedded**, on the merits: nothing is hashed or verified over the *outer* `COSE_Sign1` encoding — the signature preimage is built from the `protected`/`payload` `bstr`s and the `op-id` is computed over `det_cbor(SyncOp)`, i.e. the `payload` contents — so a wrapper buys no integrity property while adding a second encoding layer, a per-op length prefix, and a second place to disagree; item-embedding keeps the whole response one deterministic-CBOR tree a validator can check without re-entering opaque blobs; it is RFC 9052's own framing; and it matches this document's existing seam (`FastJoin` ships the signed `Snapshot` as an item and the opaque hash-addressed body as a `bstr`). A `bstr`-wrapped member is now malformed (`0x0A03`). The rule is stated once and applies to every place ops cross a wire: `pull`, `POST /sync/ops`, and §5.3 drill-down. The union is discriminated on the decoded `payload`, never on framing — both variants are `COSE_Sign1` arrays. | **NORMATIVE — wire encoding.** An implementation that `bstr`-wraps ops in an `ops` array is **non-conformant**; the two framings do not interoperate and fail as an opaque decode error. | The same independent Rust implementation (envoir), which `bstr`-wrapped its `POST /sync/pull` ops and **declined to guess** when it found the frozen vector doing the opposite. It was right that the text supported both. Aggravating factor recorded here: `SYNC-FJ-02`'s `ops` member was a bare `SyncOp` stand-in rather than a real `COSE_Sign1`, so the vector could not settle the question either — a stand-in that does not have the specified shape is how an ambiguity survives a frozen vector. The vector now carries real `COSE_Sign1` envelopes. |
 | **C-07** | **The `floor`/`covers` relationship documented as a non-relationship (new §5.2.2; §6.2 and §5.2.1 step 2 corrected).** §5.2.1 step 2 required that "the responder's `floor` MUST NOT exceed `covers`". That rule is **not expressible**: `floor` is a single `Hlc` (a point in the §3 total order) and `covers` is a per-author `VersionVector`, so there is no ordering between them. An implementer reaching for the nearest available predicate wrote `covers.lacks(floor)`, which returns `true` for a well-formed fast-join — `SYNC-FJ-01`'s own frozen data has `floor` `(W,5,A)` with `covers[A]` `= (W,4)`, because `A` produced no op in that window — and so rejects conformant responders. The unverifiable clause is **removed**, not reworded. §5.2.2 now states the split explicitly: the caller **verifies** the snapshot signature/admission/`ns`, `covers` well-formedness, the state body against `root`, and that fast-join **makes progress** (a repeated `fast-join` at the same `root`/`covers` is `0x0A09`, a loop this document previously allowed); it **MAY** check that `covers` carries a mark for `floor.author` as a logging-grade signal (not a MUST — an author whose only op is *at* the floor is retained, not truncated, so `covers` need never name it); and it **trusts** that every truncated op was folded into `covers`, since that is quantified over ops the caller cannot see. §6.2 gains the matching responder-side statement — the accounting obligation is discharged where the ops are enumerable — and §5.2.2 also records that adopting `covers` may move the caller's vector *backwards* for an author, which is intended and MUST NOT be treated as an error (step 5's re-pull re-ships the retained suffix). | **NORMATIVE — a removed MUST plus a new one.** An implementation enforcing any `floor`-vs-`covers` ordering check rejects conformant peers and must delete it; the new progress MUST (`0x0A09` on a repeated identical `fast-join`) must be added. | The same implementation, writing the caller side of §5.2.1: its first pass implemented the clause literally, and the check failed against `SYNC-FJ-01`'s own frozen data — the vector caught the specification's own sentence. |
+
+| **C-08** | **§4.1's `value` type was silently narrower than the `ext-value` it named.** The bullet described "the `ext-value` subset (§18.3.6)" as "text, byte strings, integers, booleans, and **homogeneous arrays** thereof", which drops §18.3.6's `{ * tstr => ext-value }` arm entirely and adds a homogeneity constraint §18.3.6 does not impose. Two different types were therefore in circulation under one name, and an implementation following §4.1's prose **cannot encode a nested application object at all** — a string-keyed map has no tag, so it fails at the encoder, while the integer-keyed map CBOR does encode is (correctly) not an `ext-value`, so it validates and answers `false`. The same case is blocked twice, for no stated reason: the recursive type is deterministic under §2.2's canonical map rules and **already rides inside a signature preimage** on every MOTE via `Headers.ext`, so no new determinism risk was being avoided. §4.1 now states `ext-value` in full, with recursive validation, a transport-level depth ceiling, and the exclusions that are real (floats, tags, `null`, integer-keyed maps). New §4.1.1 states what nesting does **not** buy: the merge unit is the whole `value`, so nesting is representation, and per-leaf concurrency requires decomposing into `(target, field)` addresses — plus the opaque-payload canonicalization obligation (§4.4's tie-break compares `det_cbor(value)` bytes) and the discriminated-empty rule that stands in for the absent `null`. | **NORMATIVE — a widening of the accepted value type.** An implementation that rejects a text-keyed `ext-value` map, or that rejects a heterogeneous array, is **non-conformant** and must be updated; ops it currently rejects are valid. Because it is a widening, a mixed deployment diverges by *rejection* (old replicas refuse ops new ones accept), so a product SHOULD keep using opaque payloads until every engine in its deployment is updated. No previously-valid op becomes invalid. | A product adopting the substrate for the first time (ofisi's Slides investigation), which recorded both refusals as executable assertions and shipped its content as opaque JSON `tstr` rather than guess. |
+| **C-09** | **The snapshot body is a compacted op set, not `ObservableState` (new §6.1.2; §6.1, §5.2, §5.2.1 step 3–4 and §7 corrected).** §6.1 said a joining replica "adopts its observable state" and §5.2 served `det_cbor(ObservableState)` from `GET /sync/state/<root>` — but §6.1.1 serializes only the **observable projection**, deliberately dropping exactly the metadata the next merge needs. Adopting it and continuing is **unsound for five of the six kinds**: LWW loses the winning cell's HLC (and a post-`covers` op is *not* automatically greater than it — `covers` bounds an author's own stream while the HLC totally orders across authors, so a projection-adopter overwrites a winner a full replayer keeps, and the two roots differ forever); `death` loses the certificate's HLC, making the D3 revival test unevaluable; the OR-Set loses add-tags, degenerating add-wins into add-always; RGA loses element ids, stranding every post-`covers` insert/remove in the causal-readiness buffer; only the PN-counter's total survives, and only until a below-`covers` op arrives by any path and is double-counted. §6.1.2 now specifies `SnapshotBody` — the minimal set of signed ops whose fold equals the observable state — served at `GET /sync/state/<root>`, adopted through the **ordinary op path** (no state-import entry point exists, and one is explicitly not required), and verified by **fold-then-recompute** against `Snapshot.root`. §6.2 gains the matching **body-retention obligation**, including the transitive rule that a tombstoned RGA atom which is the left-origin of a retained atom must itself be retained. | **NORMATIVE — what is transferred and how it is verified.** `Snapshot`, `root`, the DS-tags and §6.1.1's schema are **unchanged**; every frozen byte stands. What changes is the *body*: an implementation serving or adopting `det_cbor(ObservableState)` at fast-join is **non-conformant** and silently diverges. Verification changes from hashing the received bytes to folding them and recomputing — strictly stronger, since it proves the ops reproduce the committed state, and it shrinks the trusted-checkpoint residual to *omission* (unforgeable ops), never fabrication. | The same first adopter, from the other end: it built a snapshot as "one op per key" because the engine exposes no import entry point, and asked whether that was a workaround or the design. It is the design; the specification's own prose was the thing that read otherwise. |
+| **C-10** | **§4 gains explicit primitive-selection guidance (new §4.10).** No text told an implementer *which* kind to reach for, and two of them look identical from a product's UI: §4.5's death certificate and a §4.4 LWW write of an empty value are both spelled "delete". They are not interchangeable — a death certificate **dominates**, so no ordinary later write revives the key. Mapping a spreadsheet's "clear cell" to §4.5 therefore converges perfectly, passes every clear-only test, and then **silently swallows the next edit into that cell forever**, on every replica, with no error and no divergence to alarm on. The mirror-image error is equally silent: modelling a permanent deletion as an LWW flag lets a concurrent benign edit resurrect redacted content, the exact hole §4.5's D3 invariant exists to close. §4.10 states the distinction, the worked both-halves example (clear-a-cell ⇒ LWW; delete-a-slide ⇒ `death`), the selection test ("is there any user action that restores this using the same ordinary operation that created it?"), and the obligation to record the answer per modelled object. It also records the general shape: domination and ordering are different properties, and "the later write wins" is correct for exactly one of the six kinds. | **Guidance, not a semantics change.** §4.4 and §4.5 are unchanged and were already correct as written. This is a new normative *selection* requirement (an implementation MUST be able to state, per modelled object, which it chose and why) because the failure mode is silent converged data loss rather than an error. | The same first adopter, which initially mapped "clear cell" to §4.5 because it looked like a delete, caught it before shipping, and chose §4.5 **correctly** for slide deletion in the same investigation — the pair is what made the distinction legible enough to specify. |
 
 **Standing rule.** A defect between this document and a conformance vector is resolved by deciding
 **which side is right on the merits** and correcting the other **in the open** (the §10 discipline: a
