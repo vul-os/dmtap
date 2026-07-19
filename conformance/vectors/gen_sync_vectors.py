@@ -47,6 +47,7 @@ DS_OP = b"DMTAP-SYNC-v0/op\x00"                       # COSE_Sign1 external_aad 
 DS_OP_ID = b"DMTAP-SYNC-v0/op-id\x00"                 # op content-address hash preimage (§4.1)
 DS_SNAPSHOT_STATE = b"DMTAP-SYNC-v0/snapshot-state\x00"  # observable-state root hash (§6.1.1)
 DS_RECON_FP = b"DMTAP-SYNC-v0/recon-fp\x00"           # range-Merkle fingerprint fold (§5.3)
+DS_SNAPSHOT = b"DMTAP-SYNC-v0/snapshot\x00"           # Snapshot SIGNATURE preimage (§6.1 key 8)
 
 
 def b3(data: bytes) -> bytes:
@@ -808,6 +809,162 @@ add(
 )
 
 # ══════════════════════════════════════════════════════════════════════════════════════
+# SYNC-FJ-01 / SYNC-FJ-02 — §5.2.1 fast-join `pull` response (frozen; correction C-05)
+# ══════════════════════════════════════════════════════════════════════════════════════
+SNAP_TS = 1_700_000_200_000  # fixed; strictly after every HLC wall folded into `covers`
+
+
+def encode_snapshot(ns: str, covers: bytes, root: bytes, ts: int, sk, signer: bytes) -> bytes:
+    """§6.1 Snapshot. Keys 1..7 are signed; key 8 is the signature over
+    DS-tag("DMTAP-SYNC-v0/snapshot" || 0x00) || det_cbor(Snapshot \\ {8}) — the §18.1.6 rule."""
+    body_pairs = [
+        (1, enc_uint(0)),            # v
+        (2, enc_uint(1)),            # suite 0x01 (classical)
+        (3, enc_tstr(ns)),           # ns
+        (4, covers),                 # covers — §5.1 VersionVector, ik-pub bstr keys
+        (5, enc_bstr(root)),         # root — §6.1.1 observable-state content address
+        (6, enc_uint(ts)),           # ts
+        (7, enc_bstr(signer)),       # signer
+    ]
+    body = enc_map(body_pairs)
+    sig = sk.sign(DS_SNAPSHOT + body)
+    return enc_map(body_pairs + [(8, enc_bstr(sig))]), body, sig
+
+
+snapshot_fj, snapshot_fj_body, snapshot_fj_sig = encode_snapshot(
+    ns="", covers=covers_v1, root=root_v1, ts=SNAP_TS, sk=SK_A, signer=PK_A
+)
+
+# The responder truncated its op-log below this §6.2 floor; the snapshot at `covers_v1` replaces
+# the discarded prefix. The floor is the cut itself — the caller's audit handle on what was dropped.
+floor_hlc = encode_hlc(HLC_WALL, 5, PK_A)
+
+fastjoin_map = enc_map([(1, snapshot_fj), (2, floor_hlc)])
+pull_resp_fastjoin = enc_map([(2, fastjoin_map)])
+pull_resp_ops = enc_map([(1, enc_array([op_post]))])   # the ordinary answer, for contrast
+
+# The OPTIONAL bounded inline copy (key 3): the same ObservableState bytes the caller would
+# otherwise fetch from GET /sync/state/<root>. It is a CACHE HINT — verified by hashing to
+# Snapshot.root exactly as a fetched body is, and discarded on mismatch.
+fastjoin_map_inline = enc_map([(1, snapshot_fj), (2, floor_hlc), (3, enc_bstr(state_v1))])
+pull_resp_fastjoin_inline = enc_map([(2, fastjoin_map_inline)])
+
+add(
+    "sync_fastjoin_response",
+    "sync_fastjoin_pull_response",
+    {
+        "scenario": "The responder truncated its op-log below floor (W,5,A) per §6.2, retaining the "
+                    "signed snapshot at covers {A@(W,4), B@(W,7)}. A caller whose vector lacks HLCs "
+                    "inside `covers` pulls.",
+        "snapshot_ns": "",
+        "snapshot_covers_cbor_hex": covers_v1.hex(),
+        "snapshot_root_hex": root_v1.hex(),
+        "snapshot_ts": SNAP_TS,
+        "snapshot_signer_seed_hex": SEED_SYNC_A.hex(),
+        "snapshot_signer_pubkey_hex": PK_A.hex(),
+        "snapshot_sig_ds_tag_hex": DS_SNAPSHOT.hex(),
+        "floor_hlc_cbor_hex": floor_hlc.hex(),
+        "observable_state_cbor_hex": state_v1.hex(),
+    },
+    {
+        "snapshot_sig_preimage_hex": (DS_SNAPSHOT + snapshot_fj_body).hex(),
+        "snapshot_sig_hex": snapshot_fj_sig.hex(),
+        "snapshot_cbor_hex": snapshot_fj.hex(),
+        "fastjoin_cbor_hex": fastjoin_map.hex(),
+        "pull_response_cbor_hex": pull_resp_fastjoin.hex(),
+        "pull_response_with_inline_state_cbor_hex": pull_resp_fastjoin_inline.hex(),
+        "pull_response_keys": [2],
+        "ops_key_present": False,
+        "state_fetch_endpoint": "GET /sync/state/<root>",
+        "state_fetch_address_hex": root_v1.hex(),
+        "inline_state_is_cache_hint_verified_against_root": True,
+    },
+    "§5.2.1 (frozen): the `pull` response is a deterministic-CBOR integer-keyed map whose two keys "
+    "are MUTUALLY EXCLUSIVE — {1: ops} is the ordinary answer, {2: FastJoin} is the answer to a "
+    "caller below the responder's §6.2 truncation floor. FastJoin = {1: Snapshot, 2: floor Hlc, "
+    "?3: inline det_cbor(ObservableState)}. The ENCODING SPLIT is the point: the §6.1 signed "
+    "descriptor ships INLINE (it is bounded — sized by the author count, not the data — and it "
+    "carries the signature, `covers` and the `root` commitment), while the UNBOUNDED observable "
+    "state ships BY REFERENCE at Snapshot.root, fetched from GET /sync/state/<root>. By-reference "
+    "keeps a sync round's response size bounded and reuses the content-addressing the protocol "
+    "already has: the body is immutable and self-verifying, so any relay may cache and pin it, any "
+    "holder may serve it, and every peer fast-joining to the same `covers` dedupes to the same "
+    "bytes. The cost is one extra round trip on a path taken only when a peer has fallen behind a "
+    "truncation cut. Key 3 is an OPTIONAL bounded inline copy (RECOMMENDED ceiling 64 KiB) that "
+    "collapses the small-namespace case to one round trip; it MUST be verified against "
+    "Snapshot.root like any fetched body and discarded on mismatch, so there is ONE verification "
+    "path, not two. The snapshot signature is the §18.1.6 preimage DS-tag || det_cbor(Snapshot \\ "
+    "{8}) with the tag \"DMTAP-SYNC-v0/snapshot\", distinct from the state-root tag "
+    "\"DMTAP-SYNC-v0/snapshot-state\".",
+)
+
+# Caller B is AT/ABOVE the floor: its vector dominates everything in `covers`, so the surviving
+# journal suffix IS a complete answer and the ordinary {1: ops} response is correct.
+covers_caught_up = enc_bstr_map([
+    (PK_A, encode_hlc(HLC_WALL, 9, PK_A)),
+    (PK_B, encode_hlc(HLC_WALL, 9, PK_B)),
+])
+# Caller A is BELOW the floor: it lacks B@(W,7), which `covers` folded in.
+covers_behind = enc_bstr_map([
+    (PK_A, encode_hlc(HLC_WALL, 4, PK_A)),
+    (PK_B, encode_hlc(HLC_WALL, 2, PK_B)),
+])
+# A snapshot that does NOT close the caller's gap: it covers less than the caller already lacks.
+snapshot_short, _, _ = encode_snapshot(
+    ns="", covers=enc_bstr_map([(PK_A, encode_hlc(HLC_WALL, 1, PK_A))]),
+    root=root_v1, ts=SNAP_TS, sk=SK_A, signer=PK_A
+)
+
+add(
+    "sync_fastjoin_below_floor_suffix_forbidden",
+    "sync_fastjoin_floor_predicate",
+    {
+        "responder_floor_hlc_cbor_hex": floor_hlc.hex(),
+        "responder_snapshot_covers_cbor_hex": covers_v1.hex(),
+        "caller_behind_vector_cbor_hex": covers_behind.hex(),
+        "caller_behind_note": "lacks B@(W,7), an HLC folded into the responder's snapshot `covers`",
+        "caller_caught_up_vector_cbor_hex": covers_caught_up.hex(),
+        "caller_caught_up_note": "dominates every HLC in `covers`; the surviving suffix is complete",
+        "surviving_suffix_ops_cbor_hex": [op_post.hex()],
+        "snapshot_not_covering_gap_cbor_hex": snapshot_short.hex(),
+    },
+    {
+        "predicate": "behind_floor := exists (author, hlc) in Snapshot.covers such that "
+                     "caller_vector.lacks(hlc)",
+        "caller_behind_is_below_floor": True,
+        "caller_behind_response_cbor_hex": pull_resp_fastjoin.hex(),
+        "caller_behind_ops_response_forbidden": True,
+        "caller_behind_ops_response_would_be_cbor_hex": pull_resp_ops.hex(),
+        "caller_caught_up_is_below_floor": False,
+        "caller_caught_up_response_cbor_hex": pull_resp_ops.hex(),
+        "caller_caught_up_fastjoin_forbidden": True,
+        "snapshot_not_covering_gap_error_code": "0x0A09",
+        "snapshot_not_covering_gap_error_name": "ERR_SYNC_SNAPSHOT_ROOT_MISMATCH",
+        "state_body_unfetchable_error_code": "0x0A0C",
+        "state_body_unfetchable_error_name": "ERR_SYNC_SNAPSHOT_STATE_UNAVAILABLE",
+        "state_body_unfetchable_action": "FAIL_CLOSED_BLOCK",
+        "state_body_unfetchable_caller_vector_unchanged": True,
+        "suffix_fallback_after_failed_fastjoin_forbidden": True,
+    },
+    "§5.2.1 (frozen), the MUST this vector exists for: a responder whose §6.2 truncation floor is "
+    "above the caller's vector MUST NOT answer with {1: ops}. The response shown as "
+    "`caller_behind_ops_response_would_be_cbor_hex` is well-formed and would be applied without "
+    "error — that is exactly the danger. It is INDISTINGUISHABLE to the caller from a complete "
+    "answer, so the caller would advance its vector, believe itself converged, and have silently "
+    "lost every truncated op: a lost write presented as a successful sync. An error is not the "
+    "ordinary answer either, since it would strand a peer that has a working recovery path; an "
+    "error (0x0A0C) is reserved for the responder that cannot honour the path at all. The "
+    "predicate is domination of the snapshot's `covers`, NOT a comparison against the floor Hlc "
+    "alone: if the caller lacks any HLC the snapshot folded in, some op it needs may have been "
+    "truncated. Conversely a caught-up caller MUST NOT be forced to fast-join — the suffix is a "
+    "complete answer for it, and fast-joining it would discard verified local history for a "
+    "trusted checkpoint. Caller-side fail-closed: a snapshot whose `covers` does not close the "
+    "gap it was sent to close is 0x0A09 (it would leave the same hole), and a state body no "
+    "holder can serve is 0x0A0C with the caller's vector UNCHANGED — never a fallback to the "
+    "truncated suffix, which would reintroduce the silent loss by the back door.",
+)
+
+# ══════════════════════════════════════════════════════════════════════════════════════
 # SYNC-RECON-01 — range-Merkle fingerprint fold + drill-down (§5.3, frozen)
 # ══════════════════════════════════════════════════════════════════════════════════════
 def recon_fp(op_ids) -> bytes:
@@ -963,8 +1120,8 @@ out = {
     "format": "dmtap-conformance-vectors/1",
     "suite": "Sync substrate capability (substrate/SYNC.md) — suite 0x01 (classical): Ed25519 / BLAKE3-256 "
     "primitives shared with the core. These vectors exercise the deterministic CBOR + CRDT-algebra layer, "
-    "the RFC 9052 COSE_Sign1 op envelope (§4.1), the canonical observable-state root (§6.1.1) and the "
-    "range-Merkle fingerprint fold (§5.3)",
+    "the RFC 9052 COSE_Sign1 op envelope (§4.1), the canonical observable-state root (§6.1.1), the "
+    "range-Merkle fingerprint fold (§5.3) and the §5.2.1 fast-join `pull` response",
     "generated_by": "conformance/vectors/gen_sync_vectors.py (this repo) — NOT the dmtap-core reference "
     "crate, which does not implement the Sync substrate capability (it is substrate/SYNC.md's own "
     "'one genuinely new normative specification', ungrounded in any single existing numbered section). "
@@ -976,12 +1133,15 @@ out = {
     "§18-canonical, integer-keyed deterministic encoding (RFC 8949 §4.2) used by "
     "conformance/vectors/vectors.json and conformance/vectors/pub_vectors.json; all content addresses use "
     "the §18.1.5 v0 form 0x1e || BLAKE3-256(DS-tag || 0x00 || body) with the §21.24c DMTAP-SYNC-v0 DS-tags.",
-    "scope_note": "This file freezes ALL 20 of substrate/SYNC.md §10's conformance stubs. The five that "
+    "scope_note": "This file freezes ALL 22 of substrate/SYNC.md §10's conformance vectors. The five that "
     "were previously NOT-FROZEN — SYNC-OP-02 (COSE_Sign1 envelope framing), SYNC-TREE-01 (which side of a "
     "concurrent-move cycle loses), SYNC-SNAP-01/02 (canonical observable-state schema) and SYNC-RECON-01 "
     "(range-Merkle fingerprint fold) — were each resolved by adding normative frozen text to the "
     "specification FIRST (§4.1, §4.8, §6.1.1, §5.3 respectively, each with its rationale) and only then "
-    "vectored here. No decision in this file originates in this file: substrate/SYNC.md is authoritative.",
+    "vectored here. SYNC-FJ-01/SYNC-FJ-02 are NEW (correction C-05) and follow the same discipline: "
+    "§5.2.1 decided the response shape, the below-floor MUST NOT and the inline-vs-by-reference "
+    "encoding split FIRST, and only then was it vectored. No decision in this file originates in this "
+    "file: substrate/SYNC.md is authoritative.",
     "corrections_note": "Regenerated after substrate/SYNC.md §14's corrections C-01..C-04, all of which "
     "were surfaced by an independent Rust implementation of SYNC.md (envoir `dmtap-sync`), not by review: "
     "C-01 changed §4.6's PN-counter merge from per-author max of P/N to the per-author UNION of "
@@ -990,7 +1150,13 @@ out = {
     "whose 'replay' op carried a different HLC and was therefore a distinct op; C-03 fixed SYNC-RGA-02's "
     "atom_order_incl_tombstones, which contradicted §4.7 and the vector's own note; C-04 fixed "
     "SYNC-SNAP-02's snapshot_covers_cbor_hex, which encoded an integer-keyed map where §5.1 specifies "
-    "ik-pub bstr keys. Vector count is unchanged at 20.",
+    "ik-pub bstr keys. C-05 (also found by envoir, while implementing §6.2 op-log truncation) closed a "
+    "HOLE rather than a contradiction: §5.2's `pull` response had no way to say 'you are below my "
+    "truncation floor, fast-join from this snapshot', leaving a truncating responder to either return "
+    "the surviving suffix — silently losing every truncated op while APPEARING to succeed — or error "
+    "and strand the peer. §5.2.1 now specifies the fast-join response, makes the bare suffix a MUST "
+    "NOT, and adds GET /sync/state/<root> plus error 0x0A0C. Vector count goes 20 -> 22 (SYNC-FJ-01, "
+    "SYNC-FJ-02 added; the other 20 are byte-identical to the previous generation).",
     "vectors": vectors,
 }
 print(json.dumps(out, indent=2))

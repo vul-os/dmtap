@@ -386,14 +386,24 @@ never "this author has nothing" (§7, absence is not authority).
 ```
 GET  /sync/vector                → { node: ik-pub, ns: [tstr], vector: VersionVector }
 POST /sync/pull   { vector, ns } → { ops: [ COSE_Sign1(SyncOp) | SyncFrame ] }   ; ops the caller lacks
+                                 | { fast-join: FastJoin }                       ; caller is below the §6.2 cut
 POST /sync/ops    { ops }        → { applied: u32 }                              ; push ops to the peer
+GET  /sync/state/<root>          → det_cbor(ObservableState)                     ; §6.1.1 body by content address
 ```
 
 - **`GET /sync/vector`** returns the responder's node key, the namespaces it subscribes to, and its
   current `VersionVector`. (flowstock: `{node_id, vector}`.)
 - **`POST /sync/pull`** sends the caller's vector (+ requested namespaces); the responder returns, oldest
   HLC first, up to a batch limit, every op it holds whose `hlc` exceeds the caller's vector entry for that
-  op's author (or whose author is absent from the vector). (flowstock: `OpsAfter(vector, batch)`.)
+  op's author (or whose author is absent from the vector). (flowstock: `OpsAfter(vector, batch)`.) If the
+  caller's vector is **below the responder's §6.2 truncation floor**, the responder answers `fast-join`
+  instead of `ops` — never a partial suffix (§5.2.1, a MUST).
+- **`GET /sync/state/<root>`** returns the `det_cbor(ObservableState)` (§6.1.1) whose §18.1.5 content
+  address is `<root>`. It is a plain content-addressed fetch: immutable, self-verifying (the fetcher
+  recomputes `root` over the returned bytes), and therefore cacheable and pinnable by any intermediary
+  without trusting it — the same posture as a §22 public object, and served for free by the existing
+  relay cache/pin role. It carries **no** authority of its own: bytes are only adopted when they hash to
+  the `root` of a snapshot that verified under §6.1.
 - **`POST /sync/ops`** pushes a batch; the responder applies each op that is new (dedup by op content
   hash / `hlc`), verifying signature (§4.1) and CRDT validity (§4) before apply, and returns the count of
   **newly** applied ops. Apply is idempotent: a re-pushed op is a no-op (matching flowstock's
@@ -403,6 +413,93 @@ POST /sync/ops    { ops }        → { applied: u32 }                           
   **read-only and content-addressable at the op level**, so responses are cacheable and a lying responder
   can withhold or stall (detectable as a vector that never advances) but **cannot forge** an op (that
   needs an author key) — the same trustless posture as [`FEEDS.md § 5.1`](FEEDS.md).
+
+### 5.2.1 Fast-join from a snapshot (normative, frozen — `SYNC-FJ-01`/`SYNC-FJ-02`)
+
+§6.2 permits a replica to **truncate its op-log** below a stability cut once a snapshot stands in for the
+discarded prefix. That creates a caller §5.2's baseline response shape cannot answer: a peer whose vector
+is *below* the floor is asking for ops that no longer exist here. This subsection is the answer.
+
+**The MUST.** A responder whose §6.2 truncation floor is above the caller's vector — precisely: whose
+retained snapshot's `covers` contains any HLC the caller's vector `lacks` — **MUST NOT** return an `ops`
+response. It **MUST** return a `fast-join` response instead. Returning the surviving suffix is
+prohibited even though it is well-formed and would be applied without error, because it is *indis-
+tinguishable to the caller from a complete answer*: the caller would advance its vector, believe itself
+converged, and have silently lost every truncated op. That is a lost-write, presented as a successful
+sync — the exact failure §6.2's snapshot obligation exists to prevent, and the reason this is stated as a
+MUST rather than a SHOULD. Returning an *error* is likewise not permitted as the ordinary answer, because
+it strands a peer that has a perfectly good recovery path; an error is reserved for a responder that
+cannot honour the path at all (`0x0A0C`, below). **Silence about truncation is the defect; the response
+must name it.**
+
+**Response encoding (frozen).** The `pull` response is a deterministic-CBOR **integer-keyed** map (§2.2);
+the named labels in §5.2's endpoint sketch are illustrative prose, the integer keys below are the wire:
+
+```cddl
+PullResponse = { 1 => [ COSE_Sign1(SyncOp) | SyncFrame ] }   ; ops — the ordinary answer
+              / { 2 => FastJoin }                            ; the caller is below the cut
+
+FastJoin = {
+  1 => Snapshot,       ; the §6.1 signed snapshot that replaced the truncated prefix
+  2 => Hlc,            ; floor   the §6.2 cut in force at the responder (the caller's audit handle)
+  ? 3 => bstr,         ; state   OPTIONAL inline det_cbor(ObservableState); see below
+}
+```
+
+The two keys are **mutually exclusive** — a response carrying both, or neither, is malformed (`0x0A03`). A
+responder that never truncates never emits key `2`, so the baseline is unchanged for every replica that
+keeps a complete journal.
+
+**Inline vs. by-reference — the decision, and why.** The choice is not either/or once you notice that a
+§6.1 `Snapshot` is *already* a reference: it is a small, bounded, signed descriptor (`v`, `suite`, `ns`,
+`covers`, `root`, `ts`, `signer`, `sig`, sized by the author count, not the data) whose `root` is the
+§18.1.5 content address of the observable state. So the split is made along that seam:
+
+- **The signed descriptor ships inline** (key `1`). It must — it is what carries the signature, the
+  `covers` vector and the `root` commitment, and it is what makes the response self-describing. It is
+  bounded, so it cannot blow up the response.
+- **The state body ships by reference** (`Snapshot.root`, fetched from `GET /sync/state/<root>`). This is
+  the unbounded part — a namespace's entire observable state, potentially megabytes — and putting it in
+  the `pull` response would make an ordinary sync round's response size unbounded and un-resumable, on a
+  path whose batch limit exists precisely to bound it. By-reference instead **reuses infrastructure the
+  protocol already has for free**: the body is content-addressed (§18.1.5) and immutable, so it is
+  cacheable and pinnable by any relay under the §22 public-object rules, servable by *any* holder rather
+  than only the responder, fetchable in parallel or resumably by range, and deduplicated across every
+  peer fast-joining to the same `covers`. The cost is honest and small: one extra round trip, on a path
+  taken only when a peer has fallen behind a truncation cut — a rare, already-expensive event — never on
+  the steady-state sync round.
+- **Inline is retained as a bounded optimization** (key `3`, OPTIONAL). A responder MAY include the state
+  bytes when they are small (a deployment-set ceiling; `64 KiB` is the RECOMMENDED default), collapsing
+  the common small-namespace case back to one round trip. A caller **MUST** verify key `3` by hashing it
+  to `Snapshot.root` exactly as it would a fetched body, and **MUST** discard it and fetch by reference on
+  mismatch — the inline copy is a cache hint, never a second source of truth. This keeps one verification
+  path, not two.
+
+**What the caller does (normative).** On receiving `fast-join`, a replica MUST, in order:
+
+1. **Verify the snapshot** under §6.1 — signature (DS-tag `DMTAP-SYNC-v0/snapshot`) and signer admission
+   (§9) — and check `Snapshot.ns` is a namespace it subscribes to (§7); otherwise `0x0A02`/`0x0A01`/
+   `0x0A0A`. An unverifiable snapshot is discarded; the caller does **not** fall back to the suffix.
+2. **Check the snapshot covers what it is missing** — `Snapshot.covers` MUST dominate every HLC the
+   caller's own vector lacks *and* the responder's `floor` MUST NOT exceed `covers`. A `fast-join` whose
+   snapshot does not cover the gap it was sent to close is `0x0A09`: it would leave the same hole it was
+   meant to fill.
+3. **Obtain and verify the state body** — key `3` if present and hashing to `root`, else
+   `GET /sync/state/<root>` from the responder or any holder — recompute
+   `0x1e ‖ BLAKE3-256("DMTAP-SYNC-v0/snapshot-state" ‖ 0x00 ‖ det_cbor(ObservableState))` and require it to
+   equal `Snapshot.root` (`0x0A09` on mismatch). If no holder can serve it, `0x0A0C` and the round fails
+   **closed** — the caller keeps its old vector rather than half-adopting.
+4. **Adopt it as base state** per §6.1's fast-join semantics (adopt the observable state, set the local
+   vector to `covers`), under the deployment's declared §6.1 snapshot **trust policy** — this path does
+   not create a new trust posture, it uses that one, including the verify-required deployment's later
+   backfill-and-recompute obligation.
+5. **Continue pulling above the floor** — re-issue `POST /sync/pull` with the new vector (`covers`), which
+   is now at or above the responder's floor, and the ordinary `ops` answer completes the join. Fast-join
+   replaces the *truncated prefix*, never the suffix.
+
+The §6.1 snapshot semantics (root determinism, `SYNC-SNAP-02`'s fast-join-equals-replay guarantee, the
+trust policy and its residual) govern throughout and are **not** restated here; §5.2.1 specifies only how
+that mechanism is *reached over the wire* from a `pull`.
 
 ### 5.3 Range-based Merkle reconciliation (scalable mode, grounded in §5.6 `recon`)
 
@@ -563,6 +660,13 @@ advanced past them**, so no future op can depend on them:
 - **Op-log truncation.** Once a snapshot at vector `V` exists and every live replica has advanced past
   `V`, the op-log prefix below `V` MAY be truncated; the retained suffix plus the snapshot reconstruct the
   state. (The §5.6 journal `truncate_before` with the same "every member replayed past it" obligation.)
+  Truncation without a retained snapshot at `V` is prohibited, and the snapshot MUST account for every op
+  dropped — an op below the cut that `covers` does not fold in would be erased with nothing standing in
+  for it, so the truncation is refused whole rather than performed partially. A peer that nevertheless
+  arrives with a vector below the floor (a replica that was excluded from the cut as stale, §11 item 4,
+  or that simply never advanced) is served by **§5.2.1 fast-join**, which is what makes truncation safe
+  rather than merely permitted: the peer recovers via the snapshot, and the responder is forbidden from
+  answering it with a bare suffix.
 
 ---
 
@@ -636,14 +740,14 @@ authenticity does not.
 
 These follow the existing suite style ([`../conformance/`](../conformance/), §10, §22 vectors): a
 known-answer test with byte-exact inputs/outputs where the wire encoding is fully determined by this
-document's text alone. **All 20 are now byte-exact**, generated by
+document's text alone. **All 22 are now byte-exact**, generated by
 [`../conformance/vectors/gen_sync_vectors.py`](../conformance/vectors/gen_sync_vectors.py) into
 [`../conformance/vectors/sync_vectors.json`](../conformance/vectors/sync_vectors.json) — the same
 throwaway-script provenance model as [`pub_vectors.json`](../conformance/vectors/pub_vectors.json): every
 value is a direct, mechanical application of §3/§4/§5/§6/§7 to fixed inputs, no randomness — Ed25519 is
 deterministic, so even the one signature vector is a reproducible known answer. An **independent Rust
 implementation** of this document now exists and executes these vectors; it is what surfaced the §14
-corrections C-01…C-04, and the vectors below are the ones it must reproduce byte-for-byte. Generation
+corrections C-01…C-05, and the vectors below are the ones it must reproduce byte-for-byte. Generation
 stays in the script, so the vectors remain an independent check on any implementation rather than a
 restatement of one.
 
@@ -654,6 +758,12 @@ fingerprint fold). Each was resolved by **this document deciding first** — §4
 now carry the normative frozen text together with the reasoning for the choice — and only then vectored.
 Nothing below is frozen *by* the generator script: a vector may only mechanically apply a decision the
 specification already states.
+
+`SYNC-FJ-01`/`SYNC-FJ-02` are **new** (C-05), added with §5.2.1 in the same discipline: the response shape
+and the below-floor MUST NOT were decided in §5.2.1 first, with the inline-vs-by-reference tradeoff
+reasoned there, and only then vectored. They exist because an implementation hit a *hole* rather than a
+contradiction — §5.2 had no way to express an answer §6.2 requires — which is the case a vector suite is
+least likely to catch on its own, since there was no wrong answer to disagree with, only a missing one.
 
 | # | Name | Construction | Expected | Status |
 |---|------|--------------|----------|--------|
@@ -673,6 +783,8 @@ specification already states.
 | `SYNC-TREE-01` | Concurrent-move cycle | `move(A→B)` at `h1` and `move(B→A)` at `h2`, `h1<h2`, HLC-ordered replay | **earlier**-HLC move (`h1`, A under B) applied, **later** (`h2`, B under A) skipped; tree acyclic; identical on both | **Frozen** — `sync_tree_concurrent_move_cycle`. The contradiction is **resolved in §4.8**: replaying oldest-first, `h1` applies first (A becomes a child of B) and `h2` then *would* close the cycle B→A→B, so the **later** move is the one skipped. The stub's prior expected text ("later-HLC move applied, earlier skipped") was the **erroneous side** and is corrected here; §4.8's ordered-replay algorithm was correct and now states the outcome explicitly. This is Kleppmann's result and is **not** LWW for the colliding pair (LWW governs only repeated moves of the *same* node) |
 | `SYNC-SNAP-01` | Snapshot root determinism | two replicas at the same `covers` vector | identical `root`; mismatch ⇒ `0x0A09` | **Frozen** — `sync_snapshot_root_determinism`. §6.1.1 now pins the canonical `ObservableState`: a fixed six-element positional array (one section per CRDT kind, `orset`/`lww`/`pn`/`death`/`rga`/`tree`), each a section sorted by `det_cbor` of its entries (RGA inner order is sequence order, not re-sorted), and `root = 0x1e ‖ BLAKE3-256("DMTAP-SYNC-v0/snapshot-state" ‖ 0x00 ‖ det_cbor(ObservableState))`. Two replicas at the same `covers` compute identical `root`; mismatch ⇒ `0x0A09` |
 | `SYNC-SNAP-02` | Fast-join equals replay | join via snapshot+post-ops vs full replay | byte-identical observable state | **Frozen** — `sync_snapshot_fast_join_equals_replay`. Same §6.1.1 schema: snapshot-adopt + post-`covers` ops yields byte-identical `ObservableState` (hence identical `root`) to a full replay, because only the observable projection is serialized. **Corrected (§14):** the vector's `snapshot_covers_cbor_hex` previously encoded an **integer**-keyed map `{1: Hlc, 2: Hlc}`, contradicting §5.1's `VersionVector = { * ik-pub => Hlc }` — the keys are the authors' 32-byte `ik-pub` **byte strings**, ordered by §2.2 canonical map rules (ascending by encoded key bytes). No expectation exercised it, so nothing failed; it is fixed so no implementer is misled |
+| `SYNC-FJ-01` | Fast-join response encoding | caller's vector below the responder's §6.2 floor; responder holds a signed snapshot at `covers` | byte-exact `det_cbor({2: FastJoin{1: Snapshot, 2: floor}})`; key `1` (`ops`) absent; the state body is addressed by `Snapshot.root`, fetched from `GET /sync/state/<root>` | **Frozen** — `sync_fastjoin_response`. §5.2.1 pins the response as a mutually-exclusive integer-keyed map and the encoding split: signed descriptor inline, unbounded `ObservableState` by content address (optional bounded inline copy is a verified cache hint only) |
+| `SYNC-FJ-02` | Below-floor suffix forbidden | same responder, two callers: one below the floor, one at/above it | below-floor ⇒ `fast-join` **only** — returning `{1: ops}` (the surviving suffix) is non-conformant, the silent-loss case; at/above ⇒ ordinary `{1: ops}`, no `fast-join`. Caller-side: snapshot whose `covers` does not close the caller's gap ⇒ `0x0A09`; state body unfetchable ⇒ `0x0A0C`, vector unchanged | **Frozen** — `sync_fastjoin_below_floor_suffix_forbidden`. The predicate is `Snapshot.covers` containing any HLC the caller's vector lacks (§5.2.1) |
 | `SYNC-RECON-01` | Range-Merkle finds diff | two replicas differing in 1 op, range-fingerprint round | exactly the 1 differing op surfaced; equal ranges exchange no ops | **Frozen** — `sync_recon_range_merkle_diff`. §5.3 now pins the fold: `fp = 0x1e ‖ BLAKE3-256("DMTAP-SYNC-v0/recon-fp" ‖ 0x00 ‖ det_cbor([* op-id]))` over the range's op ids in ascending-HLC order, plus `count` — a single DS-tagged BLAKE3 hash (matching the §5.6 `recon` reference), **not** a homomorphic combiner. Equal `(fp,count)` ⇒ range identical, no ops exchanged; the one differing op is surfaced by drill-down |
 | `SYNC-NS-01` | Sparse scoping | caller subscribes `{x}`, responder holds `{x,y}` | only `ns=x` ops shipped | **Frozen** — `sync_ns_sparse_scoping` |
 | `SYNC-NS-02` | Cross-namespace ref rejected | RGA `ref` naming a target in another `ns` | reject `0x0A0A` | **Frozen** — `sync_ns_cross_namespace_ref_rejected` |
@@ -727,6 +839,7 @@ Registered additively under §21.14; mirrored into the §10.7 auditable set. The
 | `0x0A09` | `ERR_SYNC_SNAPSHOT_ROOT_MISMATCH` | recomputed observable-state root ≠ `Snapshot.root` at the same `covers` (§6.1) | HALT_ALERT — divergence evidence |
 | `0x0A0A` | `ERR_SYNC_NS_LEAK` | an op references a `target` in a different namespace (§7) | FAIL_CLOSED_BLOCK |
 | `0x0A0B` | `ERR_SYNC_ADMISSION_QUOTA` | an open-namespace admission limit (rate/quota) exceeded (§9) | DENY_POLICY — a policy deny, never a security gate, never a silent hole |
+| `0x0A0C` | `ERR_SYNC_SNAPSHOT_STATE_UNAVAILABLE` | a `fast-join` snapshot verified, but no holder can serve the `ObservableState` at its `root` (§5.2.1) | FAIL_CLOSED_BLOCK — the caller keeps its old vector; it MUST NOT fall back to the truncated suffix |
 
 The §10.7.5 governing rule applies unchanged: a sync security-relevant failure is either refused (fail
 closed) or surfaced as an explicit choice, never a silent degradation. New sync fail-closed rules MUST be
@@ -772,6 +885,8 @@ and how it was found.
 | **C-02** | **`SYNC-PN-01` vector corrected.** Its third op was described as "a replay of author A's own contribution" but carried `hlc.counter=1` where the first carried `0` — a different `det_cbor`, hence a different `op-id`, hence a **distinct** op whose delta §4.6 correctly accumulates (`P[A]=10`, total `8`), contradicting the vector's own expected `P[A]=5`, total `3`. The third op now carries the **same** HLC as the first, so it is genuinely the same op and is deduped by `op-id` (§5.2). | Vector fix; the expectation (`total=3`) was already right, the input was not. | Same implementation: its runner applied the true-replay variant and reproduced the vector's stated expectation exactly. |
 | **C-03** | **`SYNC-RGA-02` vector corrected.** Its note ("Z sorts immediately after x's tombstoned position" — the §4.7 insert-after rule) contradicted its `atom_order_incl_tombstones` array `["Z", "x(tombstoned)"]`. §4.7 governs: the array is now `["x(tombstoned)", "Z"]`. The array is clarified as a **human-readable label list**, not normative bytes. | Vector fix; §4.7 unchanged. | Implementation followed §4.7 and diverged from the array. |
 | **C-04** | **`SYNC-SNAP-02` vector corrected.** `snapshot_covers_cbor_hex` encoded an integer-keyed map `{1: Hlc, 2: Hlc}` where §5.1 specifies `VersionVector = { * ik-pub => Hlc }` (32-byte `bstr` keys). Re-encoded with `ik-pub` keys in canonical order; §5.1 now states the encoding rule explicitly (RFC 8949 §4.2.1 sorting applies to `bstr`-keyed maps just as to integer-keyed ones). | Vector fix, latent — no expectation exercised the field, so nothing failed. | Read-through during the C-01–C-03 fixes. |
+
+| **C-05** | **§5.2 `pull` gains a `fast-join` response (new §5.2.1); a bare suffix below the truncation floor is now a MUST NOT.** §6.2 permits op-log truncation and §6.1 gives a stranded peer the recovery mechanism, but §5.2's response shape had no way to *say* "you are below my floor, fast-join from this snapshot" — leaving a truncating responder two bad options: return the surviving suffix, which the caller cannot distinguish from a complete answer and which **silently loses every truncated op** while appearing to succeed; or return an error, which strands a peer that has a working recovery path. §5.2.1 now freezes the response (`PullResponse = {1 => ops} / {2 => FastJoin}`, mutually exclusive), the caller's obligations (verify signature → check `covers` closes the gap → verify the state body against `root` → adopt per §6.1 → resume pulling above `covers`), and the split encoding: the **signed descriptor inline**, the **unbounded state body by content address** via the new `GET /sync/state/<root>`, with an OPTIONAL bounded inline copy as a cache hint. Adds `0x0A0C`. | **NORMATIVE — wire protocol + a new MUST NOT.** A responder that implements §6.2 truncation and answers a below-floor caller with `{1 => ops}` is **non-conformant and loses writes**. A responder that never truncates is unaffected. | The same independent Rust implementation (envoir `dmtap-sync` / `node::syncserve`), while implementing §6.2 truncation: it could not implement the section safely within §5.2's shape, extended the response with an unspecified key `2`, and flagged prominently that no vector froze it. It was right to refuse to work around the gap silently — this entry is the specification catching up. |
 
 **Standing rule.** A defect between this document and a conformance vector is resolved by deciding
 **which side is right on the merits** and correcting the other **in the open** (the §10 discipline: a
