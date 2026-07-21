@@ -2610,6 +2610,45 @@
       "status": "construction-todo"
     },
     {
+      "id": "DMTAP-MIXPROF-06",
+      "level": "Private",
+      "category": "MIXPROF",
+      "req": "MUST",
+      "clause": [
+        "\u00a74.4.10a",
+        "\u00a74.4.8",
+        "\u00a716.3"
+      ],
+      "checks": "The Bootstrap\u2192Standard upgrade GROWS the guard sample, never re-draws it. Bootstrap's sample is floor 3 and Standard's is 20, so the transition necessarily enlarges it \u2014 and a naive enlargement is a fresh draw from the current fleet view at a moment an adversary chooses, which is the re-sampling \u00a74.4.8 forbids and which the (1-f)^G bound cannot survive. Existing members are retained and the top-up is spread over >= 4 mix-key epochs so no single epoch's view determines the sample.",
+      "operation": "mix_path_build",
+      "construction": "node on Bootstrap with a 3-member sample; then a fleet view that crosses Standard's bar in ONE epoch, dominated by newly-published attested ASN-disjoint mixes under adversary control, which are withdrawn an epoch later",
+      "expect": {
+        "outcome": "accept",
+        "note": "all 3 original members MUST still be in the sample after the upgrade; at most the per-epoch share of the top-up may be admitted from a single epoch's view \u2014 populating all 20 from one epoch is non-conformant and hands the adversary the entry position for the life of the node, since \u00a716.3 never re-draws. Mass disappearance of freshly admitted members MUST raise HALT_ALERT, not silently refill"
+      },
+      "status": "construction-todo"
+    },
+    {
+      "id": "DMTAP-MIXPROF-07",
+      "level": "Private",
+      "category": "MIXPROF",
+      "req": "MUST",
+      "clause": [
+        "\u00a74.4.10a",
+        "\u00a74.4.9",
+        "\u00a710.7.0"
+      ],
+      "checks": "A node that has EVER run at Standard never Bootstraps any contact, new ones included. The per-contact ratchet applies only to a node that has never reached Standard; otherwise an adversary suppressing the derived fleet view drops every NEW contact onto Bootstrap \u2014 3 hops, best-effort >=2 ASN, sample floor 3 \u2014 a path the adversary may occupy end to end, while the user-visible disclosure reads as 'young network' rather than 'under attack'.",
+      "operation": "mix_path_build",
+      "construction": "node that has operated at Standard; suppress its derived fleet view below Standard's bar; then (a) send to an established contact; (b) send to a brand-new contact",
+      "expect": {
+        "outcome": "reject",
+        "error_code": "0x0310",
+        "note": "(a) fails closed as today; (b) MUST ALSO fail closed \u2014 FAIL-QUEUED per \u00a710.7.0, held and retried, NOT Bootstrapped. Building a Bootstrap path for (b) is non-conformant and re-opens the \u00a74.4.9 downgrade attack under a friendlier name. A view falling below a previously observed Standard-satisfying size MUST raise HALT_ALERT"
+      },
+      "status": "construction-todo"
+    },
+    {
       "id": "DMTAP-FLEET-01",
       "level": "Private",
       "category": "FLEET",

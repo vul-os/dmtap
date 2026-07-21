@@ -926,7 +926,29 @@ Four normative constraints keep it from silently becoming permanent:
    describe the traffic as unlinkable.
 3. **Auto-upgrade, never fall back (MUST).** A node MUST re-evaluate its derived fleet view each
    mix-key epoch (§4.4.2, §4.4.4) and MUST move to **Standard** as soon as Standard's bar is
-   satisfiable. It MUST NOT return to Bootstrap thereafter (see 4). **This is load-bearing:** if
+   satisfiable. It MUST NOT return to Bootstrap thereafter (see 4).
+
+   **The upgrade GROWS the guard sample; it MUST NOT re-draw it (MUST).** Bootstrap's sample is
+   floor 3, Standard's is 20 (§16.3), so the transition necessarily enlarges the sample — and a
+   naive enlargement is a **fresh draw from the current fleet view at a moment an adversary
+   chooses**, which is exactly the re-sampling §4.4.8 forbids and which the `(1−f)^G` bound cannot
+   survive. Therefore, on the Bootstrap→Standard transition:
+   - existing sample members are **retained**, never discarded;
+   - the sample is **topped up** toward 20, and the top-up is **spread over ≥ 4 mix-key epochs**
+     (§16.3) so **no single epoch's fleet view determines the sample**;
+   - members that disappear shortly after admission are treated as an **exhaustion/exposure event**
+     (`HALT_ALERT`, §4.4.8), not silently refilled.
+
+   Without this, an adversary rents capacity in a few ASNs, publishes valid `_dmtap-mix`
+   attestations — §4.4.8 concedes attestation proves *accountability, not independence*, and that
+   domains are cheap — and pushes descriptors into KT until a young target's derived view crosses
+   20 attested ASN-disjoint entry mixes in **one epoch**, while honest mixes number a handful. The
+   target MUST then upgrade and MUST populate a 20-member sample drawn overwhelmingly from the
+   adversary's mixes. The surplus is withdrawn; the sample is **never re-drawn** (§16.3 refreshes
+   only on exhaustion), so those guards hold the target's entry position **for the life of the
+   node**. Neither §4.4.9 nor the rest of this section fires, because this is an *upgrade*.
+
+   **This is load-bearing:** if
    Bootstrap were reachable as a fallback, an adversary who DoSes or eclipses enough mixes could
    force every sender down onto it — which is precisely the §4.4.9 downgrade attack, re-opened
    under a friendlier name. Bootstrap is a **floor a young network starts on**, never a step a
@@ -939,6 +961,30 @@ Four normative constraints keep it from silently becoming permanent:
    per-contact rather than global because that is the granularity an attacker must defeat one
    relationship at a time, and because a new contact on a still-small network must remain reachable
    while an established one is protected.
+
+   **Scope limit — the per-contact ratchet applies ONLY to a node that has never reached Standard
+   (MUST).** Constraints 3 and 4 otherwise disagree, and the disagreement is exploitable. Once a
+   node has **ever** operated at Standard, it MUST NOT build a Bootstrap path for **any** contact,
+   new ones included; a new contact it cannot reach at Standard is **FAIL-QUEUED** (§10.7.0,
+   `0x0310`), held and retried, never Bootstrapped.
+
+   Without this limit, constraint 3's own argument defeats itself. An adversary who suppresses a
+   target's **derived** fleet view — feasible in v0, since §4.4.2 concedes a single non-gossiped KT
+   log can present a split view over the mix set and only *SHOULD*s multi-log pinning — makes
+   Standard unsatisfiable. Established contacts then correctly fail closed (§4.4.9), but every
+   **new** contact drops to Bootstrap: 3 hops, best-effort ≥ 2 ASN diversity, guard sample floor 3
+   — a path the adversary's own mixes may occupy end to end. Constraint 1 makes this user-visible,
+   but **a small fleet and an eclipsed view are indistinguishable to the client**, so the
+   disclosure reads as "the network is young" rather than "you are under attack". That is the
+   §4.4.9 downgrade re-opened under a friendlier name, which is precisely what constraint 3 exists
+   to prevent.
+
+   **Fleet-view shrinkage is an anomaly, not a return to youth (MUST).** A derived fleet view that
+   falls **below a size this node has previously observed to satisfy Standard** MUST raise
+   `HALT_ALERT` (§21.2) rather than being treated as the network having become small again. Mixes
+   leave networks; they do not un-exist in bulk, and a young network grows monotonically in the
+   ordinary case. A sudden contraction is far more likely to be suppression than attrition, and it
+   is the only signal that distinguishes the two.
 
 **Negotiation and wire impact.** Bootstrap is advertised as the capability token
 `mix-profile-bootstrap` (§10.2, §21.22) — an **additive** capability announcement, exactly like any
