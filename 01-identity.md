@@ -27,21 +27,51 @@ unknown suites (fail closed), never guess.
 
 | `suite` | Sign | KEM / PKE | AEAD | Status |
 |--------:|------|-----------|------|--------|
-| `0x01`  | Ed25519 | X25519 (HPKE) | ChaCha20-Poly1305 | v0 REQUIRED |
-| `0x02`  | Ed25519 + ML-DSA-65 | X25519 + ML-KEM-768 (hybrid) | ChaCha20-Poly1305 | RESERVED (PQ) |
+| `0x01`  | Ed25519 | X25519 (HPKE) | ChaCha20-Poly1305 | LEGACY — accept, never originate |
+| `0x02`  | Ed25519 + ML-DSA-65 | X25519 + ML-KEM-768 (hybrid) | ChaCha20-Poly1305 | **v0 REQUIRED** (PQ-hybrid) |
 | `0x03`  | Ed25519 + ML-DSA-65 | X25519 + ML-KEM-768 (hybrid) | AES-256-GCM | RESERVED (AEAD-diverse emergency target) |
+| `0x04`  | Ed25519 + SLH-DSA-128s | X25519 + ML-KEM-768 (hybrid) | ChaCha20-Poly1305 | RESERVED (signature-diverse emergency target) |
 
-Suite `0x02` is the post-quantum migration target. A node MAY hold keys in multiple suites
-during migration; the transparency log records which suite is current. Downgrade is
-prevented by pinning (§3) and by the transparency log's monotonic history.
+**PQ-hybrid is the v0 baseline, not a migration target (normative).** Suite `0x02` is what a
+conformant v0 implementation **MUST** originate. Suite `0x01` is retained **only** so an
+implementation can *verify* historical or constrained-peer objects; a conformant node **MUST NOT
+originate** `0x01` and MUST NOT select it for a new relationship
+(`ERR_SUITE_BELOW_FLOOR`, §21.15).
+
+The reason is specific to this protocol and decisive: **mail is the most archival medium there
+is**, and a harvest-now-decrypt-later adversary is recording today. A classical-by-default mail
+protocol ships a decades-long confidentiality debt on day one. Because DMTAP is greenfield, the
+PQ-hybrid floor costs one parameter decision now and a flag day never. The price is size —
+ML-DSA-65 signatures are ~3.3 KB and ML-KEM-768 ciphertexts ~1.1 KB — which is why the size
+ladder of §16.3 is dimensioned around a PQ envelope from the start (§4.4.1) rather than around a
+classical one it would later have to outgrow.
+
+A node MAY hold keys in multiple suites during migration; the transparency log records which
+suite is current. Downgrade is prevented by pinning (§3) and by the transparency log's monotonic
+history.
+
+**Primitive-family diversity, not merely primitive agility (normative).** Agility that can only
+move *within* one mathematical family is not agility. Suites `0x02` and `0x03` share **ML-DSA**
+(lattice) signatures and **ML-KEM** (lattice) key establishment, so a structural break in the
+lattice assumptions underlying both — a single family, however well-studied — would be
+network-wide on the same day, exactly the failure mode the AEAD-diversity rule below exists to
+prevent. Suite `0x04` is therefore reserved in advance as a standing **signature-diverse**
+target: **SLH-DSA** (SPHINCS+, §15) is **hash-based** and rests on no algebraic structure at all,
+so it survives any lattice break by construction. Its signatures are large (~7.9 KB at the `128s`
+parameter set), which is precisely why it is reserved for the **anchor** layer (§1.2, where
+signing events are rare) rather than proposed as a general message suite. Reserving the code
+point now, rather than allocating one under incident pressure, is what turns a signature-family
+break into a routine capability negotiation (§10.2) — the same discipline, and for the same
+reason, as suite `0x03` below.
 
 Allocation of further `suite` code points: §21.15 — `0x01`–`0x1F` Standards Action,
 `0x20`–`0xDF` Specification Required, `0xE0`–`0xFE` Private Use, `0x00`/`0xFF` Reserved.
 
 **AEAD agility is whole-suite-granular (normative).** A `suite` names its AEAD **together with**
 its signature, KEM, and hash — there is no independent AEAD selector, and no way to swap only the
-AEAD of an in-use suite. Both interoperable suites (`0x01`, `0x02`) share **ChaCha20-Poly1305**, so
-a break of ChaCha20 or Poly1305 would be network-wide the same day. Suite `0x03` is therefore
+AEAD of an in-use suite. The originating suite (`0x02`) and the legacy suite (`0x01`) share
+**ChaCha20-Poly1305**, so a break of ChaCha20 or Poly1305 would be network-wide the same day.
+Suite `0x03` is therefore
 **reserved in advance** as a standing emergency target: an AEAD-diverse (**AES-256-GCM**) suite
 that keeps suite `0x02`'s PQ-hybrid signature and KEM, so a network can migrate off the
 ChaCha/Poly monoculture through the ordinary multi-suite mechanism (§1.3) — advertise `0x03`, let
@@ -56,6 +86,45 @@ deliberately *not* provided (the honest limit of §12.8.5).
 An identity is rooted in a **root identity key** (`IK`), an offline-capable long-term
 signing keypair. `IK` signs everything authoritative but is used rarely; it SHOULD be held
 in cold form / recovery custody (§1.4).
+
+### 1.2.0 The anchor suite — cold and hot keys are dimensioned differently (normative)
+
+`IK` and the device keys beneath it have **opposite** requirements, and DMTAP does not force them
+into one algorithm choice:
+
+| | `IK` (cold anchor) | Device / operational keys (hot) |
+|---|---|---|
+| Lifetime | decades; rotation is a rare migration event (§1.5) | months; rotation is routine hygiene |
+| Signing frequency | rare (identity versions, device certs, recovery policy) | constant (every MOTE, every session) |
+| Cost of rotation | social — correspondents follow a chain, the key-name changes | none — invisible to correspondents |
+| Therefore optimise for | **conservatism** | size and speed |
+
+An `Identity` therefore carries an **anchor suite** (`Identity.anchor_suite`, §1.3) that is
+**independent of** the operational `suite` used for messages, and MAY differ from it. Both are
+drawn from the same registry (§21.15); the anchor suite governs `IK` and every signature `IK`
+itself makes, the operational suite governs everything below.
+
+- A conformant implementation MUST accept an anchor suite that differs from the operational
+  suite, and MUST verify each signature under the suite of the key that made it — never under a
+  single per-object suite assumed to cover both.
+- The anchor suite SHOULD be the most conservative available. Suite `0x04` (**SLH-DSA**,
+  hash-based, §1.1) is the intended anchor profile: its ~7.9 KB signatures are irrelevant at
+  anchor-signing frequency — a handful of signatures over an identity's whole lifetime — and it
+  rests on no algebraic structure, so it survives a break of the lattice family that both `0x02`
+  and `0x03` depend on.
+- The **key-name derives from `IK`** (`BLAKE3-256(ik)`, §3.9.6) and therefore from the anchor,
+  **not** from any operational key. Rotating the operational suite — even migrating it wholesale
+  — leaves the key-name, and thus the user's zero-authority name (§3.13), completely untouched.
+
+**Why this is the load-bearing future-proofing decision.** Every other agility mechanism in DMTAP
+(multi-suite `Identity`, high-water-marks, capability negotiation) makes migration *possible*.
+This one makes it *cheap*, and cheapness is what determines whether migrations actually happen:
+hot keys can be migrated continuously and unilaterally because nothing durable is bound to them,
+while the one key that is expensive to move is also the one resting on the most conservative
+assumption available — so it should need to move least often. This is the cold-key/hot-key
+discipline of HSM and root-CA design, applied to a self-sovereign identity. It also directly
+strengthens the §1.4 "bottom turtle": the thing that cannot be recovered if lost is now also the
+thing least likely to be broken by cryptanalysis.
 
 ```mermaid
 flowchart TD
@@ -171,7 +240,8 @@ pins.
 
 ```
 Identity {
-  suites:   [+ u8],         // algorithm suites this identity supports, preference-ordered
+  suites:   [+ u8],         // OPERATIONAL suites this identity supports, preference-ordered
+  anchor_suite: u8,         // suite governing IK itself (§1.2.0); MAY differ from `suites`
   iks:      { u8 => bytes },// identity key (IK) public half per suite (Ed25519 for 0x01, +ML-DSA for 0x02)
   version:  u64,            // monotonically increasing
   devices:  [* DeviceCert],

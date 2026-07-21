@@ -43,7 +43,7 @@ handling is imperfect; do not rely on it for seamless roaming.
 ```
 LocationRecord {
   ik:        bytes,        // identity key (DHT key = hash(ik))
-  peer_id:   bytes,        // node id, interpreted per `substrate` (v0 libp2p PeerId; may be per-epoch / unlinkable, §6)
+  peer_id:   bytes,        // node id, interpreted per `substrate`; MUST be per-epoch unlinkable (below)
   addrs:     [* multiaddr],// current reachability hints (may be relay circuits, mix addrs)
   seq:       u64,          // monotonic sequence number; reject older-or-equal (rollback defense, §16.2)
   ttl:       u64,
@@ -52,6 +52,27 @@ LocationRecord {
   sig:       bytes,        // signed by a device key
 }
 ```
+
+**`peer_id` MUST be per-epoch unlinkable (normative) — the PQ-harvest mitigation.** A node MUST
+derive its `peer_id` freshly per **location epoch** (§16.2) rather than holding one stable node
+identifier across its lifetime, so that a `peer_id` observed at time *T* cannot be linked to the
+same node at *T + Δ* by the identifier alone. This is cheap — a per-epoch keypair, rotated on the
+same cadence the record is already republished — and it is what bounds the **harvest-now,
+decrypt-later** exposure of the mixnet's routing layer.
+
+The reasoning is spelled out in §4.4.12 and is worth restating here because this field is where
+the defense actually lands: v0 Sphinx uses X25519 for the header group element, so an adversary
+recording `private`-tier traffic today and holding a cryptographically-relevant quantum computer
+later could recover **per-hop routing** across its whole recorded corpus — retroactive
+social-graph deanonymization, precisely the graph the mixnet exists to hide. A standardized
+PQ mix-packet format does not exist yet and DMTAP does not invent one (§4.4.12). But the *harm*
+is not the route; it is that the route names a **durable identity**. Making `peer_id` ephemeral
+by construction means a route recovered in 2040 resolves to an identifier that expired in 2026 —
+the harvested graph is a graph of expired pseudonyms. The residual (an adversary that also
+recorded the DHT record binding `ik → peer_id` for that epoch can still re-link) is bounded by
+the same epoch window and by routing that record through the private lookup path of §3.7. Cheap,
+available today, and it converts the worst harvest-now exposure in the protocol into a
+time-bounded one while the packet format catches up.
 
 The record follows the **IPNS pattern**: a self-certifying **value record** (DHT key =
 hash(ik)), signed, with a **monotonic sequence number + EOL/TTL** to defeat rollback/replay,
@@ -71,13 +92,87 @@ DMTAP. Mitigations DMTAP REQUIRES/RECOMMENDS:
   k-bucket.
 - **Aggressive republish** + accept only records with a newer sequence number (rollback
   defense).
-- **The DHT is one discovery mechanism, not the root of trust.** Root of trust = the user's
-  long-term keypair. Resolution order: (1) cached direct addresses, (2) **relay-reservation /
-  rendezvous ("home relay") addresses**, (3) DHT as fallback. A fresh contact SHOULD have a
-  non-DHT path (rendezvous/introduction) so it is not 100% dependent on a hostile public-DHT
-  lookup.
 - Closed/organizational deployments SHOULD use a **private DHT** (own protocol prefix) to
   shrink the Sybil surface.
+
+**IP-diversity caps do not survive IPv6 (disclosed).** The per-k-bucket IP-diversity cap above is
+a real defense against an IPv4 adversary, where addresses are scarce and costly. It is **close to
+worthless under IPv6**: a single routine allocation yields a /64 — 2⁶⁴ addresses — so per-address
+and even per-/64 caps can be defeated for free, and an adversary renting commodity capacity can
+mint effectively unlimited distinct-looking peers. Diversity counting therefore MUST be done at a
+granularity money cannot trivially multiply — **per announced BGP origin ASN**, and per /48 at
+the finest — not per address. This is the same reasoning that drives the ASN-diversity rule for
+mix path selection (§4.4.8), and for the same reason: the scarce resource is network
+*provenance*, not addresses.
+
+### 4.2.1 Resolution order — the DHT is an accelerator, never a dependency (normative)
+
+Because the DHT is the protocol's most attackable surface and an adversary with rented capacity
+can attack it cheaply, DMTAP structures `key → location` resolution so that **no established
+relationship ever depends on it.** A resolver MUST try, in order:
+
+1. **Piggybacked location (the primary path).** Every MOTE carries its sender's current signed
+   `LocationRecord` alongside the payload (§18). A correspondent therefore learns the sender's
+   fresh location **from the correspondence itself**, with no lookup of any kind. An active
+   relationship is **self-maintaining**: as long as two parties exchange messages more often than
+   either changes address, neither ever performs a location lookup, and no third party — DHT,
+   rendezvous, or directory — is involved in routing between them at all. This is the common case
+   by a wide margin, and it is entirely lookup-free.
+2. **Cached direct addresses** from the pinned relationship, with the record's `seq`/`ttl` rules.
+3. **The home rendezvous set.** An `Identity` (§1.3) MAY name a small set of **rendezvous nodes**
+   that hold a reservation for the owner and will answer a signed location query for them. The set
+   SHOULD contain **≥ 3 nodes under disjoint operators** (the same attested-operator discipline as
+   §4.4.8 and the KT log set of §3.5.2(b)), so no single rendezvous operator can censor or
+   equivocate about the owner's location, and a resolver SHOULD cross-check the records returned
+   by different members and treat disagreement as it treats resolver disagreement (§3.12.3).
+4. **The DHT — opportunistic only.** Used solely for a genuinely cold contact for whom no
+   piggybacked record, no cache entry, and no rendezvous set exists. A record obtained **only**
+   from the DHT MUST be treated as a **hint**: it is usable to attempt a connection, but the
+   identity at the far end is authenticated by the pinned `IK` as always (§3.4), so a poisoned
+   DHT answer yields an unreachable or unauthenticated peer, never a wrong-but-accepted one.
+
+**What this buys.** The eclipse attack described above is an attack on *lookup*. Steps 1–3 remove
+lookup from every path that matters: established correspondence never looks up, and cold contact
+resolves against attested, operator-diverse rendezvous nodes rather than an open keyspace anyone
+can crowd. The DHT survives as a bootstrapping convenience whose failure degrades reach for
+strangers rather than breaking the network — which is the only role a permissionless keyspace can
+safely hold in a system that must resist a well-funded adversary.
+
+### 4.2.2 Bootstrap — how a node finds its first peer (normative)
+
+A node with no peers, no cache, and no contacts must reach the network somehow, and **whatever
+answers that question is the most centralizing component in any P2P system** — it is consulted by
+every node exactly when the node can verify nothing. Leaving it unspecified does not avoid the
+centralization; it guarantees it, because every implementation then hardcodes its own vendor's
+addresses and those addresses become load-bearing infrastructure nobody chose. DMTAP therefore
+specifies bootstrap explicitly, in priority order:
+
+1. **Contacts are the bootstrap set (primary).** A node that has *ever* pinned a contact (§3.4)
+   already holds signed, verifiable peers: its correspondents' nodes and their last-known
+   addresses. It MUST attempt these **first**. This path is per-user, unenumerable by an outsider,
+   requires no infrastructure, and cannot be seized — nobody else knows or controls who your
+   contacts are. For every node past its first day, this is the whole answer.
+2. **Local discovery.** mDNS / DNS-SD on the local link, for the same-LAN, air-gapped, and
+   community-network cases (§4.8).
+3. **A signed, multi-operator `BootstrapSet`.** For a genuinely first-run node with no contacts,
+   implementations ship a `BootstrapSet`: a signed, versioned, KT-anchored list of long-lived
+   entry nodes. Normative constraints:
+   - It MUST name nodes under **≥ 3 disjoint attested operators** (§4.4.8); a single-operator
+     bootstrap list is non-conformant, because it is indistinguishable from a central server.
+   - It MUST be **user-inspectable and user-overridable** in the client, and the client MUST
+     surface which entry it actually used.
+   - It is **discovery only, never trust**: a bootstrap peer can introduce a node to the network
+     and can withhold, but every identity learned through it is verified against KT and pinned
+     exactly as any other (§3.3). A hostile bootstrap peer yields no peers, never wrong ones.
+   - Its role **ends permanently after first successful contact**: once a node has peers, it MUST
+     prefer path 1 and MUST NOT re-consult the `BootstrapSet` while any known peer is reachable.
+4. **Out-of-band introduction.** A QR code, an invite link, or a contact card carries a peer hint
+   directly (§3.4.1), which is also the strongest first-contact path because it comes with
+   out-of-band key verification for free.
+
+**The invariant:** bootstrap is consulted **once, at birth**, and never again for the life of the
+node. A design where nodes must periodically return to a well-known set has a permanent central
+dependency no matter what the ownership of that set looks like.
 
 ## 4.3 Reachability ladder
 
@@ -195,12 +290,29 @@ carries **2 KiB** of payload, so a MOTE is not "one packet ≤ 64 KiB" — it is
 2 KiB cells**. To keep size from leaking while still allowing multi-KiB inline/normal payloads
 (§2.5, §6.5), a sender MUST pad the MOTE up to the next size on a **fixed bucket ladder** and then
 fragment it into exactly `bucket / 2 KiB` Sphinx cells, all sent over independently-selected paths
-(§4.4.3) and reassembled by the recipient. The v0 ladder (§16.3) is **{2 KiB, 8 KiB, 32 KiB,
-64 KiB}** — i.e. **1, 4, 16, 32 cells**. Thus the `inline` file tier's "≤ 64 KiB after padding"
-(§2.5) is the **top rung = 32 cells**, not one packet; only sizes on the ladder ever appear on the
-wire, so an observer learns only which of four buckets a message fell into, never its true length.
-A MOTE that would exceed the top inline rung is a `normal`/`large` file (§2.5) and its bulk travels
-per §4.5, not as inline cells.
+(§4.4.3) and reassembled by the recipient. The v0 ladder (§16.3) is **{8 KiB, 64 KiB}** — i.e.
+**4 or 32 cells**. A MOTE that would exceed the top inline rung is a `normal`/`large` file (§2.5)
+and its bulk travels per §4.5, not as inline cells.
+
+**Why two rungs, and why the floor is 8 KiB (normative rationale).** Both values follow from
+decisions made elsewhere and are stated here because this is where they bite:
+
+- **The floor is set by the PQ envelope, not by the cell.** With suite `0x02` as the required
+  originating suite (§1.1), a minimal MOTE already carries an ML-DSA-65 signature (~3.3 KB) and an
+  ML-KEM-768 ciphertext (~1.1 KB) before any headers or body. A 2 KiB bottom rung **cannot hold a
+  conformant envelope at all**, so it is removed rather than retained as a rung nothing can
+  occupy. 8 KiB (4 cells) is the smallest rung that comfortably holds a PQ-signed envelope plus a
+  short message body. This is the size consequence of the PQ-by-default decision, resolved once,
+  at design time — which is the entire reason for making that decision before deployment rather
+  than after.
+- **Fewer rungs leak less, and rungs are observable.** §4.4.8 discloses that a pinned entry guard
+  necessarily learns which rung each message occupies and when it was sent. Padding hides the
+  *true* length; it does not hide the *rung*. Over a long observation window a four-value rung
+  sequence is a far richer behavioral fingerprint than a two-value one — and against an adversary
+  whose advantage is patience and storage, reducing the alphabet of the observable signal is worth
+  more than the bandwidth it costs. Two rungs means an observer learns at most one bit per
+  message about its size. Padding a 500-byte note up to 8 KiB is cheap; being fingerprinted by
+  size class over ten years is not.
 
 **Fragment reliability for multi-cell MOTEs (normative).** A MOTE padded to a top-of-ladder bucket
 fragments into as many as **32 independently-pathed cells**, each with its own loss probability; a
@@ -236,13 +348,34 @@ paths — DMTAP distributes them by **reusing DNS + key transparency**, not a ne
   `node_ik` (an ordinary DMTAP identity, so operators are accountable and KT-auditable), its
   reachability, its **Sphinx mix public key(s) per epoch** (§4.4.4), and its **stratified layer**
   (§4.4.3).
-- **`MixDirectory`** (§18.5.3) — a **directory authority** publishes a signed, versioned,
-  hash-chained snapshot of the fleet for an epoch, and **appends its root to key transparency**
-  (§3.5) exactly as the org directory does (§3.10.3). The authority is a DMTAP identity whose key
-  is pinned via the domain's `_dmtap` anchor (§3.2, a `mix=` locator) — **the same discovery and
-  pinning path as any name → key binding** (§3.3). The authority key SHOULD be threshold-held
-  (§5.8.6) and the directory MAY be attested by a **set of authorities with a `> n/2` quorum**
-  (§3.5.2(b)), so no single authority can unilaterally inject or suppress mixes.
+- **`MixDirectory`** (§18.5.3) — **a derived view, not an authority-signed artifact (normative).**
+  Each mix publishes its own `MixNodeDescriptor` **directly into the key-transparency logs**
+  (§3.5), where it is subject to the same inclusion proofs, gossip, and equivocation detection as
+  any `name → key` binding. A client's directory for an epoch is then **computed locally**: it is
+  the set of descriptors that (i) carry a valid self-signature under their own `node_ik`, (ii)
+  carry a valid `_dmtap-mix` operator attestation (§4.4.8), (iii) name a current-epoch Sphinx key,
+  and (iv) appear with a valid inclusion proof in a **`> n/2` quorum of the client's pinned KT log
+  set** (§3.5.2(b)). A `MixDirectory` object MAY still be served by any node as a **cache** — a
+  convenience bundle saving round-trips — but it is **never authoritative**: a client MUST be able
+  to reconstruct the identical fleet view from the logs alone, and MUST NOT accept a served
+  directory that contains a descriptor it cannot independently verify against its log quorum.
+
+  **Why this replaces the directory authority.** A signed fleet snapshot makes its signer the most
+  powerful party in the protocol: it chooses who is in the anonymity set, and — because path
+  building fails closed without a fresh directory — its silence stops all `private`-tier mail
+  everywhere. That is a single point of both **censorship** and **liveness** for the entire
+  network, concentrated in one key, and no amount of threshold-holding or quorum-attesting removes
+  the structural problem that clients must ask *someone specific* what the fleet is. Deriving the
+  view instead removes the question: there is nothing to seize, nothing to freeze, and nothing to
+  split-view beyond the KT logs, whose equivocation is already detected, attributed, and responded
+  to by §3.5.2(d). This is the same discipline the specification already applies to author feeds
+  in §22 — *indexes are derived, rebuildable, never authoritative* — applied to the one remaining
+  place where DMTAP still had a network-wide authority.
+
+  **Consequences elsewhere.** The freeze-attack defense below still applies, but its subject
+  becomes **KT freshness** (§3.5.2(a)) rather than directory freshness — one mechanism instead of
+  two. `ERR_MIX_DIRECTORY_SIG_INVALID` (`0x030B`) now applies only to a **cached** directory whose
+  contents fail independent verification, never to the absence of an authority signature.
 
 Because the directory is KT-anchored, an authority that shows different fleets to different
 clients (a split view over the mix set) is **detectable exactly like KT equivocation** (`0x0107`,
@@ -342,6 +475,28 @@ tunable — higher rate = more privacy, more bandwidth):
   receive a steady loop-cover stream so that **real receipts are indistinguishable from cover** on
   its delivery link — closing the receipt-timing exposure of §6.4 item 2. Without this, an
   observer of the recipient's link learns *when* mail arrives even though it cannot read it.
+
+**Constant-rate cover is the default for always-on nodes (normative).** The two cover regimes are
+not merely different settings — they defend against different adversaries, and the stronger one is
+free for exactly the node class that holds the mailbox:
+
+- **Poisson cover** (mean 30 s/msg) *blurs* the relationship between user activity and traffic. A
+  short observation cannot distinguish real from cover, but the envelope still **correlates with
+  activity**, so an adversary who records for a long enough window can recover activity patterns
+  statistically.
+- **Constant-rate cover** emits on a fixed schedule **independently of activity**. The traffic
+  envelope is flat and yields *nothing* to traffic analysis, no matter how long the observation.
+  Against an adversary whose advantage is patience and storage, this is the difference between
+  "eventually solvable" and "information-theoretically empty."
+
+Because an always-on node (§14.1) is mains-powered and on an unmetered link, the cost is
+negligible: at one 2 KiB cell per 30 s, constant-rate cover is **≈ 5.6 MB/day**. A conformant
+**always-on** node therefore MUST emit **constant-rate** cover for the `private` tier; Poisson
+cover remains permitted **only** for battery- or metered-constrained devices (phones, laptops,
+§14.1 intermittent class), where the tradeoff is real. Previously this was reserved to the
+High-security profile (§4.4.10); it is promoted to the default because the class of node that
+holds durable state can afford it, and a defense that is free for the node that matters should
+not be an opt-in.
 
 Mixing delay is applied **per hop**: each mix independently holds each packet an exp(mean 5 s,
 §16.3) time drawn from the per-hop delay command in `β` (§4.4.1) and forwards in re-randomized
@@ -446,6 +601,26 @@ disclosed.
   intersection attack; pinning guards means the victim is **either persistently clear of the
   adversary's entries (probability ≈ (1−f)^G) or persistently on a known guard** — bounding
   long-term exposure to a one-time draw instead of a cumulative certainty (§6.6, §11.3).
+
+  **Guards MUST be drawn from a persistent sampled set, not redrawn independently (normative) —
+  and this rule is what makes the bound above true.** Naive guard *rotation* silently destroys the
+  very property guards exist to provide. If each rotation draws fresh guards uniformly from the
+  fleet, then over a node's lifetime the draws are **independent and repeated**, and the
+  probability of never touching an adversarial guard is not `(1−f)^G` but `(1−f)^(G·r)` for `r`
+  rotations. At the §16.3 defaults — `G = 2`, 30-day rotation — a decade is `r ≈ 122`, so even a
+  modest `f = 0.05` gives `0.95^244 ≈ 0.0000003`: the "one-time draw" bound has quietly become a
+  near-certainty of eventual exposure, and the guard mechanism has bought nothing against a
+  patient adversary. This is not hypothetical; it is the failure Tor identified and fixed in its
+  guard specification (proposal 271, §15).
+
+  A conformant node therefore maintains a **persistent sampled set** — a larger set of candidate
+  entry mixes (the **guard sample**, §16.3) chosen **once**, weighted by capacity and constrained
+  by the operator- and ASN-diversity rules below — and draws its `G` active guards **only from
+  within that sample**. Rotation moves the active guards *inside* the sample; it does **not**
+  re-sample from the fleet. The sample is refreshed only when it is exhausted by nodes going
+  permanently offline, or when the owner explicitly re-samples (a disclosed exposure event).
+  Long-run exposure is then bounded by the **initial sample** — a single draw — exactly as the
+  `(1−f)^G` analysis claims, rather than growing without limit in the number of rotations.
   **Why G = 2 (not Tor's single primary guard).** Tor pins **one** primary guard (with sampled
   backups) to *minimise* the chance of ever touching an adversarial guard; DMTAP pins **two**
   because a mail node's entry mix is also its **cover-loop origin** and reachability anchor, and a
@@ -490,8 +665,39 @@ disclosed.
   diversity** (a mix counts as a distinct operator toward the disjoint-operator requirement **iff**
   its `_dmtap-mix` attestation validates), which is what stops one adversary minting *N* fake
   operators to defeat the a² bound.
-  Operators **SHOULD post stake/bond** as gateway operators do (§9.6), making Sybil fleets costly,
-  and path selection **weights mixes by measured reliability/reputation**. **The exact weight
+- **ASN and jurisdiction diversity (MUST / SHOULD) — the constraint money cannot cheaply buy.**
+  Operator attestation binds a mix to an accountable domain, but a **domain is cheap**: an
+  adversary with a modest budget registers fifty domains, publishes fifty `_dmtap-mix`
+  attestations, and satisfies the operator-diversity rule above while running every one of those
+  mixes on rented capacity in a single datacenter. Attestation proves *accountability*, not
+  *independence*. A conformant path therefore MUST additionally traverse mixes under **disjoint
+  announced BGP origin ASNs**, and SHOULD traverse **disjoint legal jurisdictions**.
+
+  ASN is the right granularity because it is the one property of a rented fleet the renter cannot
+  cheaply diversify: commodity capacity concentrates in a small number of hosting ASNs, so
+  requiring three ASN-disjoint hops forces a Sybil adversary to procure capacity across genuinely
+  independent networks — a materially higher cost than buying domains, and one that scales with
+  the diversity requirement rather than being a fixed entry fee. Jurisdiction-disjointness targets
+  the adjacent threat that attestation also fails to address: a single legal order compelling
+  several nominally-independent operators at once. Both constraints are evaluated over the
+  **attested** operator set, and both compose with — never replace — the operator-diversity rule.
+
+  Path selection **weights mixes by measured reliability/reputation**.
+
+  **On stake and slashing (normative — deliberately NOT specified).** Earlier drafts of this
+  section, and §9.6, proposed that operators post a bond that is **slashed** on proven
+  misbehavior. DMTAP **does not specify** such a mechanism, and an implementation MUST NOT present
+  one as a protocol guarantee. The reason is that a slashing scheme requires an escrow that holds
+  the bond and an **adjudicator** empowered to seize it — and any party with that power is a
+  central authority with more leverage over the network than anything else in this document,
+  reintroduced at exactly the layer the design works hardest to keep authority-free. There is no
+  neutral, decentralized adjudicator available that does not itself become the thing to capture.
+  An *unspecified* stake requirement is strictly worse than none, because it advertises a
+  deterrent that does not exist. DMTAP therefore relies on the three mechanisms that need no
+  adjudicator: **attested operator identity** (accountability), **ASN/jurisdiction diversity**
+  (structural independence), and **measured reputation** (a misbehaving mix loses path share
+  automatically under any conforming weighting, §9.8). Deployments that additionally want a bond
+  may run one as **operator policy**, out of scope here. **The exact weight
   function is an implementation choice, not pinned (NIT):** the "measurement hook" is a concrete
   input — each node's loop-return statistics (§4.4.7) feed a reliability score (§9.8) that
   **down-weights mixes that drop or delay** — but the mapping from score to selection probability

@@ -157,6 +157,35 @@ violation. Codes are the §21 registry values. Where a row has no code, the fail
 signature/decoder rejection with no dedicated status. Every "behavior" is a **MUST** unless the
 owning clause says otherwise.
 
+### 10.7.0 Failure classes — "fail closed" names three different behaviors (normative)
+
+"Fail closed" has been used above as though it were one rule. It is three, and conflating them
+produces a protocol that is secure and unusable. Every invariant in this section MUST be
+classified as exactly one of:
+
+| Class | Meaning | When it applies | User-visible effect |
+|---|---|---|---|
+| **FAIL-CLOSED-AUTH** | Refuse permanently. Do not proceed on any timescale. | The failure is about **authenticity or confidentiality**: a signature does not verify, a key does not match a pin, a log equivocated, a suite is below the ratchet, resolvers disagree. | An error and an alert. Retrying cannot help and MUST NOT be offered. |
+| **FAIL-QUEUED** | Hold, retry, never lose, never weaken. | The failure is about **liveness**: some external service is unreachable *right now* — a directory, a log, an issuer, a peer. Nothing is wrong with the message; it simply cannot be sent yet under the guarantees in force. | Queued. Surfaced only after the retry deadline (§16). |
+| **FAIL-DEGRADED** | Proceed with an explicitly reduced guarantee. | Only where the reduced guarantee is **still acceptable**, the reduction is **user-visible**, **time-capped**, and **logged**, and the user has consented to the weaker tier. | A visible indicator naming exactly what is reduced and for how long. |
+
+**The governing distinction.** A failure of *authenticity* must never become a delay, and a
+failure of *liveness* must never become a rejection. Classifying a liveness failure as
+FAIL-CLOSED-AUTH is not conservative — it is a **denial-of-service surface handed to anyone who
+can take a service offline**, and it converts an outage in one component into total loss of
+function. This matters especially here: DMTAP depends on several external services (KT logs, the
+mix directory, postage issuers, rendezvous nodes), and if each is independently permitted to
+block all progress, composite availability is the product of all of them and will be worse than
+the SMTP the protocol replaces.
+
+**The invariant that follows from it (MUST).** *An offline-first store-and-forward protocol must
+never be unable to queue.* Whatever is unreachable, a node MUST always be able to accept a
+message from its user, hold it durably, and keep trying under the guarantees in force. No
+liveness failure anywhere in this specification may prevent enqueue. Email's decisive operational
+property is that it degrades to **late**, never to **blocked**; DMTAP MUST preserve that, and the
+one thing it may never trade for privacy is the ability to hold a message until the privacy is
+available.
+
 ### 10.7.1 Version, suite & capability downgrades
 
 | Invariant | Clause | Trigger | Behavior / error on violation |
@@ -177,7 +206,7 @@ owning clause says otherwise.
 | Per-epoch mix replay drop | §4.4.6 | a Sphinx per-hop tag already in the epoch replay cache | `DROP_SILENT`, `0x030E` (cache spans every still-usable key, no hard epoch-boundary flush) |
 | Mix operator-diversity **MUST be attested** | §4.4.8 | a mix whose `operator` is absent/un-attested is counted as fresh diversity | it MUST NOT count as its own operator — excluded or counted shared; keeps the ≈ *a*² compromised-path bound (else one Sybil operator collapses it to ≈ *a*) |
 | Mix directory authority-signed + rollback | §4.4.2 | directory not signed by the pinned authority, or an older-or-equal `version` | reject, `0x030B` (a directory split-view is a KT equivocation, `0x0107`) |
-| **Mix directory freshness (freeze defense)** | §4.4.2 | a served `MixDirectory` older than the freshness window (§16.3, ≤ one mix-key epoch) — an adversary freezing the client on a stale, adversary-favourable fleet view | treat as stale; MUST refresh before building any `private` path and **fail closed** if none is obtainable, `0x0311`; a withheld fresh directory is KT-detectable (no new root within the window), completing the directory authority's detectable-if-misbehaves property |
+| **Mix directory freshness (freeze defense)** | §4.4.2 | a served `MixDirectory` older than the freshness window (§16.3, ≤ one mix-key epoch) — an adversary freezing the client on a stale, adversary-favourable fleet view | **FAIL-QUEUED** (§10.7.0): treat as stale; MUST refresh before building any `private` path; if none is obtainable the sender **queues and retries**, `0x0311` — it MUST NOT downgrade the tier and MUST NOT refuse to enqueue. A directory outage delays mail; it must never stop it. A withheld fresh directory is KT-detectable (no new root within the window), completing the directory authority's detectable-if-misbehaves property |
 | Cover traffic is not optional | §4.4.5, §6.2 | (posture) a `private`-tier node omitting loop/drop/recipient cover | non-conformant — cover is load-bearing, MUST be emitted |
 
 ### 10.7.3 Trust-binding (KT / identity / group) fail-closed

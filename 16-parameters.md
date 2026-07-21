@@ -41,9 +41,9 @@ above and for ordering hints.
 |-----------|---------|-------|
 | Mix path length | 3 hops | Sphinx onion, stratified (§4.4.1, §4.4.3) |
 | Per-hop mix delay | exp, mean 5 s | Poisson mixing; `private` tier (§4.4.5) |
-| Cover-traffic rate | Poisson, mean 30 s/msg | loop + drop + recipient-side loop; tunable per node; higher = more privacy, more bandwidth (§4.4.5) |
+| Cover-traffic rate | **constant-rate, 30 s/cell (always-on nodes — MUST)**; Poisson mean 30 s/msg (battery/metered devices only) | loop + drop + recipient-side loop (§4.4.5). Constant-rate ≈ **5.6 MB/day** — negligible for a mains-powered node, and it makes the traffic envelope **activity-independent** rather than merely activity-blurred, which is what defeats a patient long-horizon observer |
 | Sphinx cell size (`δ`) | 2 KiB | Sphinx constant-length payload cell after padding (§4.4.1) |
-| Payload bucket ladder | {2, 8, 32, 64} KiB = {1, 4, 16, 32} cells | a MOTE is padded up to the next rung, then fragmented into that many 2 KiB cells (§4.4.1); only ladder sizes appear on the wire |
+| Payload bucket ladder | **{8, 64} KiB = {4, 32} cells** | a MOTE is padded up to the next rung, then fragmented into that many 2 KiB cells (§4.4.1); only ladder sizes appear on the wire. Two rungs only — an observer learns ≤ 1 bit of size per message. The 8 KiB floor is set by the PQ envelope (ML-DSA-65 sig ~3.3 KB + ML-KEM-768 ct ~1.1 KB, §1.1), which cannot fit a 2 KiB rung |
 | Multi-cell reassembly timeout | ≤ 15 min (≈ 3× the `private`-tier delivery latency budget) | a partial multi-cell MOTE held in the bounded reassembly cache is discarded if not completed within this window (§4.4.1 fragment reliability); bounds recipient memory against half-MOTE flooding |
 | Fragment-recovery method | per-cell SURB-ARQ **or** FEC (`n > k` erasure code) | sender's choice, capability-negotiated (§10.2); recovers missing cells at the lost-fraction cost, never full re-send (§4.4.1). Retransmitted/parity cells are ordinary constant-length Sphinx cells |
 | Mix key epoch | 24 h | Sphinx mix-key rotation; advertise current+next, delete old key at `valid_until` (§4.4.4) |
@@ -54,8 +54,11 @@ above and for ordering hints.
 | Loop-cover rate (λ_loop) | Poisson, mean 30 s | client + mix loops for active-attack detection (§4.4.7) |
 | Loop-loss detection threshold | > 20% loss (sliding window) or latency ≫ delay budget | infer active drop/delay attack → `0x030F`, rotate + `HALT_ALERT` + fail-closed (§4.4.7). Note: **sub-threshold** selective dropping (< 20% loss) is **bounded, not eliminated** — an adversary dropping a small fraction stays under detection but also achieves little; the **High-security profile's** faster loop rate (mean 5 s, §4.4.10) **tightens** this floor (detects smaller/faster loss) |
 | Entry-guard set size (G) | 2 | pinned entry-layer mixes per sender (§4.4.8) |
-| Entry-guard rotation period | 30 days | Tor-style guard rotation; intersection-attack bound (§4.4.8) |
+| **Guard sample size** | 20 attested, ASN-disjoint entry mixes | the **persistent sampled set** guards are drawn from (§4.4.8). Chosen ONCE; rotation moves active guards *within* it and MUST NOT re-sample from the fleet — otherwise repeated independent draws turn the `(1−f)^G` bound into `(1−f)^(G·r)` and guards buy nothing over a decade |
+| Guard-sample refresh | only on exhaustion or explicit owner re-sample | a re-sample is a disclosed exposure event, not routine hygiene (§4.4.8) |
+| Entry-guard rotation period | 30 days | Tor-style rotation **inside the sample**; intersection-attack bound (§4.4.8) |
 | Path operator-diversity | ≥ 3 disjoint operators (one per hop) | no two hops share `operator` (§4.4.8); relaxed only while single-operator (§4.4.11) |
+| **Path ASN-diversity** | ≥ 3 disjoint announced BGP origin ASNs | MUST; domains are cheap and attestation proves accountability, not independence — ASN is the diversity axis rented capacity cannot cheaply buy (§4.4.8). Jurisdiction-disjointness SHOULD additionally hold |
 | Minimum viable `private` path | 3 hops, 1/layer, current-epoch keys | below this the sender fails closed, never downgrades (§4.4.9, `0x0310`) |
 | High-security profile | 5 hops, exp mean 30 s/hop, constant-rate cover mean 5 s, 3 guards / 7 d, 5 disjoint operators | user-selectable maximal anonymity (§4.4.10); capability-negotiated (§10.2) |
 | `private`-tier end-to-end latency | seconds–minutes (Standard); tens of minutes (High-security) | consequence of mixing (§6, §4.4.10) |
@@ -89,7 +92,11 @@ above; inline/push/pull governs durability, mixnet/bulk governs metadata privacy
 
 | Parameter | Default | Notes |
 |-----------|---------|-------|
-| Cold-sender PoW | memory-hard (Argon2id), adaptive | last-resort tier (§9.4) |
+| **Cold-sender sequential work (VDF)** | Wesolowski/Pietrzak VDF, delay ≈ **3 s** single-core, adaptive | **PREFERRED** cold-contact cost (§9.4.1). Sequential ⇒ rented parallel compute buys ≈ nothing (≈10× spread across all real hardware, vs ≈1000× for a parallelizable puzzle), so the cost gradient finally runs *against* the spam farm instead of against the phone |
+| VDF verification cost | milliseconds, independent of delay | **asymmetric by construction** — this is why the VDF path needs no verification budget and no defer-without-verifying escape hatch, unlike Argon2id below (§9.4.1) |
+| VDF puzzle scope | `id ‖ recipient ‖ nonce(epoch) ‖ sender_key` | `sender_key` binding per §9.2a — a stolen proof is worthless under any other ephemeral key |
+| **Zero-relationship delivery floor (`N_floor`)** | **≥ 5 cold MOTEs / sender-key / day** | MUST (§9.7a). A stranger with only a keypair and a valid VDF proof always reaches the **requests area** — never the inbox. Without this floor the §3.13 key-name promise is false: a sovereign identity would be nameable, reachable, verifiable, and silently undeliverable |
+| Cold-sender PoW | memory-hard (Argon2id), adaptive | last-resort **fallback** tier only, where VDF is unavailable (§9.4) |
 | PoW puzzle scope | `id ‖ recipient ‖ nonce(epoch)` | fresh epoch nonce to prevent precompute |
 | Memory-hard PoW verification budget | bounded per window **per delivering connection/relay** (e.g. ≈ a few / s / source, operator-tunable) | a recipient MUST bound how many symmetric-cost Argon2id verifications it performs; beyond budget, **defer to the requests area WITHOUT verifying** (never spend unbounded memory-hard work on unauthenticated input, never fail open) (§9.4) |
 | Unknown-issuer token budget | 0 | self-issued/unvetted → no rate budget (§9.3.1) |

@@ -130,6 +130,56 @@ hashcash asymmetry favors organized spammers (botnets/GPUs) over low-power legit
 asymmetry, and difficulty SHOULD be adaptive. Prefer the token/reputation path (§9.3) whenever
 available.
 
+### 9.4.1 Sequential work (VDF) is the preferred cold-contact cost (normative)
+
+Memory-hardness narrows the parallel adversary's advantage; it does not remove it. A GPU farm or
+a botnet still computes Argon2 far faster in aggregate than a phone, so the cost gradient
+continues to run **against** the legitimate low-power sender and **for** the organized one —
+which is the wrong way round for a mechanism whose entire purpose is to make bulk sending
+uneconomic. Against precisely the adversary this protocol is designed to withstand — one whose
+defining advantage is **access to a great deal of compute** — a compute-denominated puzzle is the
+weakest possible choice of scarcity.
+
+Rank the available scarcities by how much an adversary's compute budget helps them:
+
+| Scarcity | Does rented compute help? | Mechanism |
+|---|---|---|
+| **Social proximity** | Not at all — cannot be bought | vouch / introduction (§9.7) |
+| **Money** | No — cost is linear, no asymmetry to exploit | postage (§9.5) |
+| **Sequential time** | Barely — only single-core speed, ≈10× spread | **VDF (this section)** |
+| **Parallel compute** | Yes — 100–1000× spread | memory-hard PoW (§9.4) |
+
+DMTAP therefore defines the cold-contact work proof as a **Verifiable Delay Function** — a
+Wesolowski- or Pietrzak-style sequential-squaring VDF over the same scope as §9.4
+(`id ‖ recipient ‖ nonce(epoch)`, §16.5), with the delay parameter set so a single legitimate
+message costs a few seconds of wall-clock on any device. Two properties make this strictly better
+than memory-hard PoW here:
+
+- **It is inherently sequential.** A VDF's evaluation cannot be parallelized: 100,000 rented
+  cores compute it no faster than one core. An adversary's advantage collapses from *their total
+  compute* to *their single-core clock speed* — roughly an order of magnitude across all real
+  hardware, against three orders for a parallelizable puzzle. The cost gradient finally points the
+  right way: a phone sending one message pays about what a spam farm pays **per message**, and the
+  farm's capital buys it almost nothing.
+- **Verification is asymmetric by construction, which independently fixes a DoS hole.** A VDF
+  proof verifies in milliseconds regardless of how long it took to produce. This removes the
+  problem §9.4 is forced to work around above: because Argon2id verification costs the *recipient*
+  roughly what it cost the *sender*, a flood of bogus PoW attachments is itself a memory/CPU
+  denial-of-service on the recipient, which is why that clause must impose a verification budget
+  and defer unverified MOTEs. A VDF has no such symmetry — a recipient can verify every proof it
+  is offered, cheaply, and needs no defer-without-verifying escape hatch.
+
+**Conformance.** A recipient's `ChallengeSpec` (§9.2) MAY specify `vdf(delay)` in place of, or
+alongside, `pow(bits)`. Implementations SHOULD prefer `vdf` and SHOULD offer `pow` only for
+interoperability with counterparts that do not implement it. The binding rule of §9.2a applies
+unchanged: the VDF scope MUST include `sender_key`, so a stolen proof is worthless under any
+other ephemeral key. Parameters are pinned in §16.5.
+
+**Honest limit.** VDF constructions require either a trusted setup or a class group of unknown
+order, and standardization is less mature than hashcash. The construction is chosen for the
+*shape* of its cost curve, not for cryptographic novelty, and the fallback to memory-hard PoW
+(§9.4) remains specified so a deployment is never blocked on VDF availability.
+
 **Bounding verification cost — the verifier's own memory-hard budget (normative).** A memory-hard
 Argon2id verification is **symmetric**: checking a solution costs the recipient roughly what
 producing it cost the sender. Because the cold-sender gate runs this check **before** any per-source
@@ -182,17 +232,67 @@ For decentralized legacy gateways (§7):
 - **Per-identity accountability**: every outbound handoff carries the sender's signature +
   postage, so a gateway attributes abuse to a *token/identity*, not an IP — making a shared
   reputation pool safe to decentralize.
-- **Operator stake/bond**: operators post collateral; poisoning the pool slashes it (Sybil
-  resistance + incentive alignment).
+- **Structural independence**: operator attestation plus **ASN/jurisdiction diversity**
+  (§4.4.8) — the Sybil-resistance mechanisms that need no adjudicator. DMTAP deliberately does
+  **not** specify an operator stake/bond or a slashing scheme: enforcing one requires an escrow
+  and an adjudicator empowered to seize funds, which is a central authority more powerful than
+  anything else in this specification (§4.4.8, normative note). Deployments may run bonds as
+  operator policy; the protocol claims no such deterrent.
 - **Reputation routing**: nodes route outbound to operators by measured deliverability;
-  bad operators lose traffic.
+  bad operators lose traffic. This is the enforcement mechanism — automatic, adjudicator-free,
+  and applied by each node independently.
 
-## 9.7 Vouch / introduction (optional)
+## 9.7 Vouch / introduction (first-class)
 
 A cold sender MAY present a **vouch** — an introduction token signed by a contact the recipient
-trusts (a mutual connection) — to bypass PoW/stamp. This bootstraps first contact through the
+trusts (a mutual connection) — to bypass VDF/PoW/stamp. This bootstraps first contact through the
 social graph without a central authority, and MUST itself be rate-limited to prevent vouch
 farming.
+
+**Vouch is a primary tier, not a curiosity (normative).** Of every anti-abuse mechanism in this
+section, the vouch is the **only** one an adversary cannot buy with either compute or money: it
+requires that someone the recipient already trusts is willing to spend their own reputation on
+the sender. That makes it the most robust cold-contact path against a well-resourced adversary,
+and implementations MUST offer it wherever a mutual contact exists rather than treating it as an
+exotic fallback. It is also the mechanism with the best user experience — an introduction is how
+humans actually make first contact — so the incentives of security and usability point the same
+way here, which is rare enough to exploit.
+
+## 9.7a The zero-relationship delivery floor (normative)
+
+§3.13 promises that a user with no domain, no name-chain, and no provider is a **full
+first-class DMTAP identity**. That promise is only true if such a user can actually *deliver*.
+Without the rule in this section it is not: an identity with no issuer relationship gets a
+default ARC budget of **zero** (§9.3.1), postage requires an issuer with a real-money float
+(§9.5.1), a vouch requires a pre-existing mutual contact, and PoW is explicitly rate-capped and
+last-resort (§9.4). Compose those and a sovereign key-name identity is nameable, reachable, and
+verifiable — and **silently undeliverable**. That would reproduce, one layer up, exactly the
+IP-reputation gatekeeping that made self-hosted SMTP unusable, while the specification claimed
+the opposite.
+
+Therefore: **a conformant recipient MUST accept at least the zero-relationship floor** — a
+minimum of `N_floor` cold MOTEs per sender-key per day (§16.5) from a sender presenting **only** a
+valid sequential-work proof (§9.4.1) bound to the recipient's current epoch beacon, with **no**
+token, **no** postage, and **no** vouch. Floor deliveries land in the requests area (§2.7a), not
+the inbox — the recipient's surfacing policy is unchanged and the user still sees nothing they
+did not ask for. What the floor guarantees is narrower and non-negotiable: that a stranger with
+nothing but a keypair and a few seconds of sequential work **can always reach the requests area**,
+and can therefore be found, replied to, and promoted to a contact by a human decision.
+
+- The floor is a **minimum**, not a ceiling: a recipient MAY grant far more to trusted issuers,
+  vouched senders, or paid postage. It MUST NOT grant less.
+- A recipient under active flood MAY apply the §9.4 deferral budget to floor traffic as it does to
+  any other, but MUST NOT set `N_floor` to zero as a standing policy
+  (`ERR_POLICY_BELOW_FLOOR`, §21).
+- Implementations MUST NOT ship a default policy that violates the floor, and a policy UI MUST
+  NOT offer "reject all unknown senders" as a reachable configuration without disclosing that it
+  makes the identity uncontactable by anyone not already known.
+
+**Why this is normative rather than advisory.** Every individual recipient has a local incentive
+to set their own floor to zero — it is strictly safer for them. The aggregate of everyone doing so
+is a network where only the already-connected can participate, which is the precise failure the
+naming ladder (§3.13) and the key-name floor (§3.9.6) exist to prevent. This is a
+collective-action problem, and the only place to solve it is in the conformance requirements.
 
 ## 9.8 Mixnet abuse
 
@@ -210,8 +310,9 @@ actually apply:
   proof-of-work bound to the mix hop itself** (a puzzle over the cell + epoch the mix *can* check
   without decrypting) as an anti-flood cost knob under load — distinct from the recipient's §9.4
   cold-sender PoW, which the mix cannot see.
-- **Operator rate limits and stake (MUST/SHOULD).** Operator-level rate limits and mix-operator
-  **stake/bond** (§6.4, §7.5, §9.6) make sustained flooding costly and attributable.
+- **Operator rate limits and attested diversity (MUST).** Operator-level rate limits, plus the
+  attested-operator and ASN-diversity requirements of §4.4.8, make sustained flooding costly and
+  attributable without requiring any adjudicator to seize a bond (§9.6).
 
 The recipient's sealed token/postage/PoW (§9.3–§9.5) still gates whether the message is *accepted
 into the recipient's inbox* — but it is enforced at the **recipient**, after mix delivery, never
