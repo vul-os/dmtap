@@ -18,6 +18,14 @@ Initial draft. Nothing here is normative yet except §0.
 
 ### Added
 
+- **§22 (erasure)** — the erasure-rights conflict stated exactly rather than solved: why §0.5.1's
+  structural exclusion is stronger than any deletion mechanism, the three candidate mechanisms for
+  the residual with their honest limits, the unresolved controller question, and a closing note
+  that this needs legal advice rather than another literature pass.
+- **`docs/DECISION-vat-facilitator.md`** — options and a recommendation on the EU VAT
+  deemed-supplier exposure. *(Committed alongside the §16 freeze rather than on its own; that
+  commit's message does not mention it.)*
+
 - **§0 Overview** — goals, non-goals, the DMTAP substrate adoption, roles, the single operator
   class, the public/sealed quadrant split, where state lives, the document map, and the normative
   glossary.

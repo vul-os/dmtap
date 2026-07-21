@@ -249,6 +249,7 @@ whether that incentive creates another operator, is open (§21.8).
 | §19 | Parameters | timeouts, limits, defaults |
 | §20 | References | normative and informative standards |
 | §21 | Grounding | what the evidence supports, and what it contradicts |
+| §22 | Erasure | the erasure-rights conflict, candidate mechanisms, and the residual left unresolved |
 
 ## 0.9 Conventions & normative glossary
 
