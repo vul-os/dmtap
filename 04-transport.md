@@ -230,7 +230,7 @@ sees both sender and recipient**; mixes add **randomized (Poisson) delays** and 
 defeating timing correlation; nodes emit **loop + drop cover traffic** so an observer cannot tell
 when real messages flow; **sealed sender** (§6.2) keeps the sender identity inside the payload,
 never in the outer packet; and **size padding** to the bucket ladder (§4.4.1, §16.3) means the
-*exact* length leaks nothing — an observer learns only which of the four size buckets (§4.4.1).
+*exact* length leaks nothing — an observer learns only which of the **two** size buckets (§4.4.1), i.e. at most one bit of size per message.
 
 ```mermaid
 flowchart LR
@@ -526,15 +526,28 @@ survivable instead of silent.
   anonymity ↔ latency/bandwidth tradeoff, §6.6 item 1).
 - **Topology: stratified (layered), free-route within a layer.** The fleet is partitioned into
   **three layers** by `MixNodeDescriptor.layer` (0=entry/1=middle/2=exit); a path is built by
-  drawing **one mix uniformly at random from each layer in order**, weighted by advertised
+  drawing **one mix from each layer in order** — **layer 0 from the sender's active entry guards
+  (§4.4.8), NOT uniformly at random**, and layers 1..n−1 uniformly at random within the layer,
+  weighted by advertised
   capacity/reputation (§9.8). Rationale: a stratified topology (as analyzed for Loopix and
   deployed by Nym) gives a **well-defined anonymity-set analysis and predictable mixing** and
   spreads load evenly, versus an unconstrained free route whose anonymity is harder to reason
   about and whose load concentrates on popular nodes. Layer assignment is part of the directory,
   so all senders draw from the same partition.
-- **Fresh path per packet.** A sender MUST select an **independent** path for **each Sphinx cell**
-  (including the cells of a multi-cell MOTE, §4.4.1, and each cover packet, §4.4.5); paths are
-  never reused across messages, so no persistent circuit exists to correlate.
+- **Fresh path per packet — for the MIDDLE and EXIT hops only.** A sender MUST select an
+  **independent** middle and exit for **each Sphinx cell**
+  (including the cells of a multi-cell MOTE, §4.4.1, and each cover packet, §4.4.5); no persistent
+  middle/exit circuit exists to correlate.
+  **The entry is deliberately NOT fresh, and the two rules are not in tension.** An earlier
+  revision of this section said a path is built by drawing uniformly at random from *each* layer
+  and that every cell gets a fully independent path — which directly contradicted §4.4.8's
+  `MUST NOT choose a fresh entry mix per packet` and, followed literally, destroyed the very bound
+  guards exist to provide: a fresh entry per cell means a 64 KiB MOTE draws **32 independent
+  entries**, so an adversary holding a fraction *f* of entry mixes lands on *some* of a victim's
+  paths almost immediately and the `(1−f)^G` one-time-draw bound collapses into cumulative
+  certainty (§4.4.8, §6.6 item 1). Freshness at the **middle and exit** is what prevents circuit
+  correlation; persistence at the **entry** is what bounds long-term intersection. They defend
+  different attacks and neither substitutes for the other.
 
 ### 4.4.4 Mix key rotation & epochs
 

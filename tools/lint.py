@@ -99,6 +99,12 @@ STALE_TERMS: list[tuple[str, str]] = [
      "the node/gateway 'two components' framing; roles are flags on one binary (§0.2)"),
     (r"implements only `?0x01`? and MUST reject",
      "told implementers to reject the suite §1.1 REQUIRES them to originate (§18.2)"),
+    (r"four size buckets|which of the four buckets",
+     "the bucket ladder has TWO rungs (§4.4.1, §16.3) — a third would raise the per-message size "
+     "leak from 1 bit to log2(3); 'four buckets' is the superseded ladder"),
+    (r"uniformly at random from each layer",
+     "entry (layer 0) is drawn from the sender's ACTIVE ENTRY GUARDS, not uniformly (§4.4.8) — "
+     "uniform-per-layer entry selection collapses the (1-f)^G intersection bound"),
     (r"post stake/bond|stake is slashed|slashing scheme is specified",
      "stake/slashing was removed — it needs an escrow and an adjudicator (§4.4.8)"),
 ]

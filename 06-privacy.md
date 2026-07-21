@@ -45,7 +45,7 @@ DMTAP's headline guarantee is **strong metadata privacy against a global *passiv
   cannot distinguish real activity from cover. Rate is a **tunable knob** (higher rate → more
   privacy, more bandwidth).
 - **Size padding** — MOTEs are padded to fixed size buckets so the *exact* length does not leak
-  (an observer learns only which of the four size buckets, §4.4.1).
+  (an observer learns only which of the **two** size buckets, §4.4.1 — at most one bit per message).
 
 These are **normative and fully specified** — the Sphinx packet format, mix directory, path
 selection, key rotation, cover-traffic rates, active-attack detection, entry guards, operator

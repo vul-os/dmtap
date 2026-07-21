@@ -867,13 +867,18 @@ check.
 
 **Example trace (known contact, fast path).**
 ```
-A → B: Envelope{ v:0, suite:1, id:blake3:7ab2..., to: bob_ik, epoch:null, ts:..., kind:0x01,
+A → B: Envelope{ v:0, suite:2, id:blake3:7ab2..., to: BT_ab, epoch:null, ts:..., kind:0x01,
                  challenge:null, ciphertext:..., sender_sig:Ed25519(...) }
+       # `to` is the BLINDED TAG for the A↔B pair (§2.2a), NOT bob_ik. This is what makes
+       # step 5 executable: a KeyTag would carry no sender information at all (it is Bob's
+       # own key), so it would be classified COLD and this fast path could not be reached.
 B: step1 v/suite known                                          # OK
 B: step2 recompute blake3(ciphertext) == id                      # OK
 B: step3 verify sender_sig under envelope's ephemeral key        # OK
-B: step4 resolve to=bob_ik → this node                            # OK, matches
-B: step5 classify: alice_ik is a pinned known contact             # KNOWN
+B: step4 resolve to=BT_ab → this node                             # OK, matches
+B: step5 classify: BT_ab is the pinned blinded tag for alice_ik   # KNOWN (from `to` alone —
+                                                                  #   alice_ik is NOT yet visible;
+                                                                  #   it appears at step 8)
 B: step6 SKIPPED (known contact, §2.7 "known contacts MAY skip step 6")
 B: step7 decrypt ciphertext (HPKE to bob's key)                  # OK
 B: step8 verify Payload.sig under Payload.from == alice_ik (pinned) # matches

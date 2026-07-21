@@ -73,7 +73,10 @@ Envelope {
 
 `to` is a **`DeliveryTag`**, one of:
 
-- the recipient's **identity key** (default, simplest); or
+- the recipient's **identity key** — the **first-contact** form, simplest, and the only option
+  before a per-contact secret exists. It carries **no sender information** (it is the recipient's
+  own key), so an envelope bearing it is always classified **cold** at §2.7 step 5; a known contact
+  MUST move to a blinded tag; or
 - a **group id** (for MLS group messages, §5); or
 - a **blinded delivery tag** — a per-contact value `BT = HKDF(shared_secret, epoch_day)` derived
   from a secret established at first contact (`epoch_day` is the **day-counter epoch**, §0.8 —
@@ -253,6 +256,20 @@ in order:
 4. **Resolve `to`** to this node (or a group it belongs to). If `to` does not resolve, drop.
 5. **Classify the sender** by `to`/pinning state: a **known contact** (fast path) vs an
    **unknown/cold sender**.
+   **What `to` can and cannot tell you (normative).** Classification happens *before* decryption —
+   that ordering is the whole decryption-DoS defense — so the only relationship signal available is
+   `to`. A **`BlindedTag`** identifies the sender, because it is derived from a per-contact secret
+   established at first contact (§2.2a); a **`GroupTag`** identifies the group. A **`KeyTag` does
+   not**: it is the *recipient's own* identity key, and `sender_key` is a fresh ephemeral (§2.2), so
+   a `KeyTag` envelope carries **no sender information whatsoever** at step 5.
+   Therefore: **a `KeyTag` envelope MUST be classified COLD**, and a sender that is a known contact
+   of the recipient **MUST address it by `BlindedTag`** (or `GroupTag` for an established group)
+   once one has been established. `KeyTag` is the **first-contact** form, not the steady-state one.
+   Without this rule step 5 is unexecutable on the documented default: two mutually pinned contacts
+   using `KeyTag` and omitting `challenge` (which §2.2b permits for known contacts) would be
+   classified cold, deferred, never acked, and the sender's queue would expire at 72 h — while the
+   only alternative reading, treating an unidentifiable sender as *known*, deletes the cold-sender
+   gate entirely.
 6. **For cold senders, enforce anti-abuse policy (§9) NOW, before decryption**, using the
    `challenge` field (ARC token / PoW / stamp / vouch) — all checkable without decrypting.
    Reject or defer per §9.2 / §2.7a if the challenge is absent or insufficient.
