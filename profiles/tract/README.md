@@ -79,7 +79,7 @@ keywords appear in capitals — `make lint` enforces that a stub cannot quietly 
 21-grounding.md       what the evidence supports, and what it contradicts
 build/                markdown -> single HTML -> PDF via headless Chrome. No LaTeX.
 tools/lint.py         internal-consistency checks; belongs in CI
-conformance/          test vectors (planned)
+conformance/          planned case catalogue + vector discipline; zero vectors until §16 is normative
 ```
 
 ```sh

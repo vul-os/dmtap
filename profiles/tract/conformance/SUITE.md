@@ -18,7 +18,7 @@ Loud failures mostly catch themselves.
 | **id** | `TRACT-<CATEGORY>-<NN>`, stable once assigned, never reused. |
 | **profile** | The §15.2 profile the case belongs to: catalogue-only, transacting, routing, or gateway. A case may name more than one when the invariant applies across profiles. |
 | **clause** | The section (and subsection, where the stub prose already commits to one) the case pins. |
-| **will assert** | What a conforming implementation must do, in the language of a future case, not a MUST — nothing here is normative text and none of it should be read as if it were. |
+| **will assert** | What a conforming implementation must do, in the language of a future case, not a capitalised requirement keyword — nothing here is normative text and none of it should be read as if it were. |
 
 A **status** column is deliberately omitted: every row in this file has the same status,
 PLANNED, and repeating it 60 times would just be noise. A row moves out of this file and into a
@@ -47,7 +47,7 @@ is malformed" — it is "the object is well-formed, and wrong."
 | TRACT-CAT-01 | catalogue-only | §2.2, §2.3 | two independently-published `ProductRecord` objects that canonicalise to identical bytes converge to the identical content address; two records differing before canonicalisation — including differing only in field order before canonical CBOR encoding — do not silently collide |
 | TRACT-CAT-02 | catalogue-only | §2.6 | a client presented with an index's claim about an offer that disagrees with the seller's own feed for that offer prefers the feed, in every case, with no configuration that inverts the precedence — an index is authoritative over nothing |
 | TRACT-CAT-03 | catalogue-only | §2.4 | an `Offer` object is rejected if it does not declare all four axes (Item, Availability, Fulfilment, Consideration) — a partially-specified offer is not accepted with the missing axis defaulted, because a silent default here is a silent price or terms change |
-| TRACT-CAT-04 | catalogue-only | §2.3 (identity ladder) | a claimed external identifier (GTIN, MPN) on a product record is treated as advisory and unverified, never as proof of authority — a client MUST NOT rank or dedupe two records more confidently than the content-address floor supports merely because they share a claimed identifier |
+| TRACT-CAT-04 | catalogue-only | §2.3 (identity ladder) | a claimed external identifier (GTIN, MPN) on a product record is treated as advisory and unverified, never as proof of authority — a client must not rank or dedupe two records more confidently than the content-address floor supports merely because they share a claimed identifier |
 
 ## Availability and fulfilment (§3, §4)
 
