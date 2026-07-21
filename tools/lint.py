@@ -72,6 +72,8 @@ STALE_TERMS: list[tuple[str, str]] = [
      "8 KiB floor cannot hold a conformant suite-0x02 MOTE (11 967 B min); floor is 16 KiB"),
     (r"two components?\b(?![^.]*signature)(?=[^.]*(?:node|gateway|binary|software))",
      "the node/gateway 'two components' framing; roles are flags on one binary (§0.2)"),
+    (r"implements only `?0x01`? and MUST reject",
+     "told implementers to reject the suite §1.1 REQUIRES them to originate (§18.2)"),
     (r"post stake/bond|stake is slashed|slashing scheme is specified",
      "stake/slashing was removed — it needs an escrow and an adjudicator (§4.4.8)"),
 ]
@@ -81,6 +83,19 @@ STALE_TERMS: list[tuple[str, str]] = [
 FAILCLASS_EXPECT: dict[str, str] = {
     "0x0311": "FAIL-QUEUED",  # stale fleet view — §10.7.2; must not block or downgrade
 }
+
+# C9: the normative status of each algorithm suite, per §1.1 (governing). Any
+# other suite table that restates a status must agree. This check exists because
+# §18.2 labelled 0x01 "v0 REQUIRED" and 0x02 "RESERVED" long after §1.1 inverted
+# them, and told implementers to reject the suite they must originate — a
+# spec-breaking contradiction that four review passes read past.
+SUITE_STATUS: dict[str, str] = {
+    "0x01": "legacy",     # verify only, MUST NOT originate
+    "0x02": "required",   # the v0 originating suite
+    "0x03": "reserved",
+    "0x04": "reserved",
+}
+SUITE_ROW_RE = re.compile(r"^\|\s*`(0x0[1-4])`\s*\|(.+)$")
 
 Finding = tuple[str, str, str]  # (level, location, message)
 
@@ -252,6 +267,31 @@ def check_stale_terms() -> list[Finding]:
     return out
 
 
+def check_suite_status() -> list[Finding]:
+    """C9: no suite table may contradict §1.1 on a suite's normative status."""
+    out: list[Finding] = []
+    for p in SPEC_FILES:
+        for n, line in enumerate(read(p).splitlines(), 1):
+            m = SUITE_ROW_RE.match(line)
+            if not m:
+                continue
+            code, rest = m.group(1), m.group(2).lower()
+            # only rows that actually assert a status
+            if not any(k in rest for k in ("required", "reserved", "legacy")):
+                continue
+            want = SUITE_STATUS[code]
+            if want == "required" and "required" not in rest:
+                out.append(("ERROR", f"{p.name}:{n}",
+                            f"{code} is the v0 REQUIRED originating suite (§1.1); row says otherwise"))
+            elif want == "legacy" and "required" in rest:
+                out.append(("ERROR", f"{p.name}:{n}",
+                            f"{code} is LEGACY verify-only (§1.1); row marks it required"))
+            elif want == "reserved" and "required" in rest:
+                out.append(("ERROR", f"{p.name}:{n}",
+                            f"{code} is RESERVED (§1.1); row marks it required"))
+    return out
+
+
 def main() -> int:
     warn_as_error = "--warn-as-error" in sys.argv
     quiet = "--quiet" in sys.argv
@@ -265,6 +305,7 @@ def main() -> int:
     findings += check_failclass(code_to_action)
     findings += check_conformance()
     findings += check_stale_terms()
+    findings += check_suite_status()
 
     errors = [f for f in findings if f[0] == "ERROR"]
     warns = [f for f in findings if f[0] == "WARN"]

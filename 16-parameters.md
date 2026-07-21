@@ -142,11 +142,14 @@ standardizes no KEM combiner**, warning that a combined KEM containing ML-KEM "m
 IND-CCA2 security" and deferring to SP 800-227. It is pinned on analysis and a fixed HPKE code
 point, not on standing.
 
-> **Known divergence (flagged, not resolved here).** §18.1.4 and §18.2 still label `0x01`
-> "v0 REQUIRED" and `0x02`/`0x03` "RESERVED" — the implementation-status labels the frozen
-> conformance vectors (all suite `0x01`) were generated under. **§1.1 governs** the normative
-> originating requirement. Reconciling the wire-format labels requires regenerating the vector
-> corpus under `0x02` and is tracked as its own change, not folded into a correction pass.
+> **Resolved.** §18.2 previously labelled `0x01` "v0 REQUIRED" and `0x02` "RESERVED", and
+> instructed a v0 implementation to *reject* `0x02` fail-closed — flatly contradicting §1.1 and,
+> read literally, telling implementers to refuse the suite they are required to originate. The
+> labels were **implementation status** (what the reference core supports, and what the frozen
+> vectors were generated under) presented in a **normative** column. §18.2 now separates the two
+> axes explicitly: the normative status is §1.1's, and the all-`0x01` vector corpus is disclosed
+> as a **gap in the corpus, not a licence to originate `0x01`**. Regenerating the corpus under
+> `0x02` remains its own tracked change; it was never what the contradiction depended on.
 
 ## 16.8 Auth, sessions & group ordering
 

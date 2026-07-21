@@ -81,9 +81,30 @@ the signature algorithm, the KEM/PKE, the AEAD, and the content-hash for that ob
 
 | `suite` | Sign | KEM/PKE | AEAD | Hash | Status |
 |--------:|------|---------|------|------|--------|
-| `0x01` | Ed25519 | X25519 (HPKE, RFC 9180) | ChaCha20-Poly1305 | BLAKE3-256 | v0 REQUIRED |
-| `0x02` | Ed25519 + ML-DSA-65 | X-Wing (X25519 + ML-KEM-768) | ChaCha20-Poly1305 | BLAKE3-256 | RESERVED (PQ) |
+| `0x01` | Ed25519 | X25519 (HPKE, RFC 9180) | ChaCha20-Poly1305 | BLAKE3-256 | LEGACY — verify only, MUST NOT originate (§1.1) |
+| `0x02` | Ed25519 + ML-DSA-65 | X-Wing (X25519 + ML-KEM-768) | ChaCha20-Poly1305 | BLAKE3-256 | **v0 REQUIRED originating suite** (§1.1) |
 | `0x03` | Ed25519 + ML-DSA-65 | X-Wing (X25519 + ML-KEM-768) | **AES-256-GCM** | BLAKE3-256 | RESERVED (AEAD-diverse emergency target, §16.7, §21.15) |
+| `0x04` | Ed25519 + SLH-DSA-128s | X-Wing (X25519 + ML-KEM-768) | ChaCha20-Poly1305 | BLAKE3-256 | RESERVED; the intended **anchor** profile (§1.2.0, §16.7) |
+
+**Normative status and implementation status are different axes — do not conflate them
+(normative).** The Status column above is the **normative** one: what a conformant node MUST
+originate, per §1.1. It is *not* a statement about what any implementation supports today, and
+earlier drafts of this section conflated the two — labelling `0x01` "v0 REQUIRED" and `0x02`
+"RESERVED" because that was the state of the reference implementation, which flatly contradicted
+§1.1 and, read literally, instructed implementers to reject the very suite they are required to
+originate.
+
+The honest separation:
+
+- **Normative (§1.1, governing):** originate `0x02`; accept `0x01` only to verify historical or
+  constrained-peer objects; reject an unknown suite fail-closed (`ERR_UNKNOWN_SUITE`, §21.3);
+  refuse to originate below the floor (`ERR_SUITE_BELOW_FLOOR`, `0x0125`).
+- **Implementation status (disclosed, not normative):** the frozen conformance vectors
+  (`conformance/vectors/`) are **all suite `0x01`**, because ML-DSA-65 and ML-KEM-768 are not yet
+  implemented in the reference core. That is a **gap in the corpus, not a licence to originate
+  `0x01`** — it means the `0x02` path is currently specified-but-unvectored, exactly as
+  `conformance/README.md` records. A conformant implementation is measured against §1.1, and the
+  corpus catches up to it; the requirement does not retreat to meet the corpus.
 
 `0x03` shares `0x02`'s byte layout exactly — every suite-governed length is identical (§18.2) —
 differing **only** in the AEAD selector (AES-256-GCM in place of ChaCha20-Poly1305; the AEAD
@@ -225,8 +246,12 @@ suite (§1.2.0), a decoder MUST select the length row by **the suite of the key 
 signature**, not by a single per-object suite. The 7 920 B `sig-val` is why an anchor-signed
 announcement is a **top-rung** MOTE on the bucket ladder (§4.4.1).
 
-The PQ (`0x02`/`0x03`) lengths are RESERVED and given for forward planning; a v0 implementation
-implements only `0x01` and MUST reject `0x02`/`0x03` fail-closed until it supports them.
+The PQ (`0x02`/`0x03`/`0x04`) lengths are **normative**, not forward planning: `0x02` is the v0
+originating suite (§1.1) and the bucket ladder is dimensioned from these numbers (§4.4.1). An
+implementation that does not yet support a suite MUST reject objects in it fail-closed
+(`ERR_UNKNOWN_SUITE`, §21.3) rather than guessing — but it is **not conformant while it cannot
+originate `0x02`**, and MUST NOT read that rejection rule as permission to originate `0x01`
+(`ERR_SUITE_BELOW_FLOOR`, `0x0125`, §1.1).
 
 ---
 
