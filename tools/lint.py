@@ -73,9 +73,14 @@ REGROW_RE = re.compile(
     r"^\|\s*`?~*`?(0x[0-9A-Fa-f]{4})`?~*`?\s*\|\s*`?~*`?((?:ERR|STATUS)_[A-Z0-9_]+)`?~*`?\s*\|(.*)$"
 )
 # Extension blocks register their own codes outside §21's main table: DMTAP-PUB
-# owns 0x0900-0x09FF (§22) and the Sync substrate owns 0x0A00-0x0AFF
-# (substrate/SYNC.md). A code defined in its owning document is registered.
-EXTENSION_REGISTRIES = [ROOT / "22-public-objects.md", ROOT / "substrate" / "SYNC.md"]
+# owns 0x0900-0x09FF (§22, extended by DMTAP-PUBSUB §25) and the Sync substrate
+# owns 0x0A00-0x0AFF (substrate/SYNC.md). A code defined in its owning document
+# is registered.
+EXTENSION_REGISTRIES = [
+    ROOT / "22-public-objects.md",
+    ROOT / "substrate" / "SYNC.md",
+    ROOT / "25-pubsub.md",
+]
 # Conformance case ids: family may contain digits (KTV1, PUB, GWALIAS ...)
 CASEID_RE = re.compile(r"\bDMTAP-[A-Z][A-Z0-9]*-\d+\b")
 

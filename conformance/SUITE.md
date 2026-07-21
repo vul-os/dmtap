@@ -42,7 +42,7 @@ and on `reject` MUST map it to the named §21 error code with that code's `Actio
 | **Core** — signing preimages (`PRE`) | 3 | 3 | 0 | 0 | 0 |
 | **Core** — key-name (`NAME`) | 6 | 6 | 0 | 0 | 0 |
 | **Core** — safety number (`SAFE`) | 2 | 2 | 0 | 0 | 0 |
-| **Core** — suite fail-closed (`SUITE`) | 7 | 7 | 0 | 0 | 0 |
+| **Core** — suite fail-closed (`SUITE`) | 8 | 8 | 0 | 0 | 0 |
 | **Core** — §2.7 validation pipeline (`VAL`) | 15 | 0 (2 reuse ADDR/PRE) | 0 | 15 | 0 |
 | **Core** — identity / KT / naming (`IDENT`) | 6 | 0 | 0 | 6 | 0 |
 | **Core** — aliases (`ALIAS`) | 3 | 0 | 0 | 3 | 0 |
@@ -97,9 +97,10 @@ and on `reject` MUST map it to the named §21 error code with that code's `Actio
 | **Core** — video hints, migration & attestation badges, optional `pub-1` (`VIDMIG`) | 3 | 0 | 0 | 3 | 0 |
 | **Core** — wire objects with no vector: decode & cross-field rules (`WIRE`) | 10 | 0 | 0 | 10 | 0 |
 | **Core** — §18 KATs: manifest, mix descriptor, Sphinx framing (`WIREKAT`) | 9 | 9 | 0 | 0 | 0 |
-| **Total** | **327** | **55** | **6** | **249** | **17** |
+| **Core** — DMTAP-PUBSUB extension, optional `pubsub-1` (`PUBSUB`) | 15 | 0 | 0 | 14 | 1 |
+| **Total** | **343** | **56** | **6** | **263** | **18** |
 
-The 55 vectored + 6 self-contained cases (**61**) are fully machine-runnable **today** from
+The 56 vectored + 6 self-contained cases (**62**) are fully machine-runnable **today** from
 `vectors.json` / `pub_vectors.json` + the inline bytes here, with **no reference implementation
 required**. They pin the entire deterministic, security-critical Core spine — canonical CBOR,
 content addressing, the two MOTE signature preimages (§18.9.1/§18.9.2), Ed25519 (with RFC 8032
@@ -109,17 +110,18 @@ root, the announce and feed-head signing preimages, `announce_id`, the prev-chai
 type-incompatibility with sealed manifests, the same-author supersede rule, and feed anti-rollback
 incl. the idempotent-refetch and fork/equivocation branches).
 
-The 249 `construction-todo` cases give the exact recipe and expected §21 error for every remaining
+The 263 `construction-todo` cases give the exact recipe and expected §21 error for every remaining
 normative branch — the full §2.7 pipeline, identity/KT fail-closed, the higher levels, the
 hardening families (`DENIABLE`/`ORG`/`KTV1`/`ATTEST`), the `PROFILE` display-data guards, the
 pluggable-resolver guards (`RESOLVE`), the optional `PUSH` wake-signaling guards, the `FILE`
 durability guards, the anti-drift families
 (`MIXPROF`/`FLEET`/`GUARD`/`LOC`/`FLOOR`/`FAILCLASS`/`GWROLE`), the gateway families
 (`GWOPS`/`GWSMTP`/`GWATT`/`GWNAME`/`GWFLOOR`/`GWLEG`), the remaining `PUB` fail-closed rows not yet
-vectored, and the profile-level `CAD` and `VIDEO` checklists. Each becomes byte-backed when the
-corresponding subsystem gains a fixed-input KAT (see README "Coverage vs. deferred").
+vectored, the profile-level `CAD` and `VIDEO` checklists, and the DMTAP-PUBSUB extension guards
+(`PUBSUB`, §25). Each becomes byte-backed when the corresponding subsystem gains a fixed-input KAT
+(see README "Coverage vs. deferred").
 
-The 17 `manual-attestation` cases are the MUSTs with **no wire bytes to recompute**: an in-product
+The 18 `manual-attestation` cases are the MUSTs with **no wire bytes to recompute**: an in-product
 disclosure, a share sheet, a process boundary or the population a deployment actually serves. They
 are identified by `manual-attestation` in the **status** column, and each names the review that
 settles it — client-UX review, operator-copy review, or deployment review.
@@ -135,10 +137,10 @@ easy to over-read, so:
 - It is **section-level, not MUST-level.** A section counts as covered if *any* case cites it, not
   if every MUST in it is exercised. The metric is a deliberately generous floor: it says "nothing
   in the implementable spec is entirely unattended", never "everything is checked".
-- It counts cases that **exist**, not cases that **pass.** Of 327 cases, 61 are byte-runnable
+- It counts cases that **exist**, not cases that **pass.** Of 343 cases, 62 are byte-runnable
   today; the rest carry a construction recipe or are settled by review. **No implementation has
   been run against this suite**, so the suite is a specification of tests, not a test result.
-- The denominator is **curated.** [`scope.json`](scope.json) classifies all 333 MUST-bearing
+- The denominator is **curated.** [`scope.json`](scope.json) classifies all 345 MUST-bearing
   sections and states a reason for each; the 89 non-IMPL sections are excluded because their MUSTs
   are owned by another clause (the §21 registry Action column, the §19/§20 appendices), bind a
   future registrant or an operator's process, or are not requirements at all. Inclusion is the
@@ -150,12 +152,12 @@ numbers are printed by `make coverage`, deliberately, so the curation can be che
 trusted.
 
 **Sync status:** `SUITE.md` and [`suite.json`](suite.json) are **in sync** — both carry the same
-**327** case ids, and `make lint` (check C5) fails the build if they ever disagree, or if any
+**343** case ids, and `make lint` (check C5) fails the build if they ever disagree, or if any
 document states a different count. The changed deniable objects (§5.2.1 dedicated-`idk`) are still
 to be re-vectored when the reference regenerates `vectors.json`.
 
-> All 55 vectored cases correspond one-for-one to entries in `vectors.json` (43 cases / 42 of its
-> 68 vectors — several vectors drive more than one case; the remaining 26 are pre-generated for
+> All 56 vectored cases correspond one-for-one to entries in `vectors.json` (44 cases / 43 of its
+> 69 vectors — several vectors drive more than one case; the remaining 26 are pre-generated for
 > construction-todo families not yet wired to a case) or `pub_vectors.json` (12 cases / all 15 of
 > its vectors — several `PUB` cases reference more than one `pub_vectors.json` entry). No case
 > references a vector entry that does not exist in its file; see
@@ -1239,6 +1241,41 @@ authorship — and must be rendered as visibly weaker.
 | DMTAP-VIDMIG-01 | MUST | §24.4.5, §22.5.1 | **Hints are advisory, and unrecognized hint types are ignored.** A client MUST NOT treat a blob fetched from an unlisted source differently from one fetched from a listed hint — verification is against the signed rendition root, so provenance of the *bytes* is irrelevant once they verify. And new transports are new hint types: an unrecognized type MUST be ignored, never rejected, or every new transport becomes a flag day | construction: fetch identical, correctly-verifying rendition bytes from (a) a listed hint and (b) an unlisted source, comparing the client's acceptance and any trust marking; and supply a `Hint` of an unrecognized type alongside a usable one | accept (identical treatment for (a) and (b), and the unknown hint type ignored while the usable one is used); marking (b) as less trusted, or rejecting the object because one hint type is unknown, is non-conformant | construction-todo |
 | DMTAP-VIDMIG-02 | MUST | §24.14, §24.8, §22.3.3 | **No laundering authorship through attestation, and history stays dual-format.** Migration is per-author and consensual: re-signing an existing record requires the author's key, which a PUB server, archive or migration tool holding only plaintext never has for a self-custodied identity — so there is no bulk operator-run rewrite. Pre-migration history stays valid in its original bytes and a reader's client MUST retain the ability to verify **both** formats for as long as pre-migration content exists. A server that re-attests old content under its own key is asserting **server reputation, not authorship**, and MUST render it with a visibly weaker badge; a UI surfacing attestation provenance MUST distinguish the two cases visibly, not only in metadata a reader has to go looking for | construction: a feed mixing author-signed records and server-attested pre-migration records; inspect whether both formats still verify and how each is rendered; variant: a server-attested record presented with the same badge as an author-signed one | accept (both formats verify and the two provenances are visibly distinct in the surface itself); rendering a server attestation identically to an author signature is a security misrepresentation and is non-conformant, as is dropping the ability to verify the pre-migration format | construction-todo |
 | DMTAP-VIDMIG-03 | MUST | §24.17, §24.8 | **A similarity relation is evidence, never truth.** The `similarity` relation type (`20`) carries a near-duplicate **claim**, and a PUB server MUST NOT auto-merge on it alone. Near-duplicate detection is a heuristic over bytes an adversary chooses; merging two authors' records on it collapses two identities into one on the strength of a guess, and the §24.8 rule that a signed tally is worth exactly the attester's reputation applies here in its sharpest form | construction: two independently-authored records with a `similarity` claim asserted between them by a third party; drive the server's indexing and inspect whether the records remain distinct objects of record | accept (both records remain distinct and independently addressable; the claim is presented with its provenance); auto-merging, deduplicating or suppressing either record on the claim alone is non-conformant | construction-todo |
+
+---
+
+## DMTAP-PUBSUB (§25) — `PUBSUB`
+
+Level **Core**, optional capability **`pubsub-1`** (§10.2, §21.22, §21.24d) — the identical
+treatment `PUB`/`CAD`/`VIDEO` already receive: guards below are MUST **when a node implements
+DMTAP-PUBSUB**, never required for bare Core conformance, and a node that never advertises
+`pubsub-1` is never expected to originate or honor a `Subscription`/`SubscriptionRevoke`/`FeedHint`.
+DMTAP-PUBSUB is additive over §22 and capability-negotiated (§25); it bumps no `Envelope.v`, adds no
+field to any existing wire object, and introduces no flag day. No new vectors were generated for
+this family — every case below is a **construction recipe** over the CDDL/signing-preimage rules
+§25 already states, or (one case) a client-UX attestation with no wire bytes to recompute at all;
+`conformance/vectors/vectors.json` and `pub_vectors.json` are unchanged by this family
+(`git status` on `conformance/vectors/` stays clean). The §25.8 wire-allocation/forward-compatibility
+rule and the §25.10 fail-closed table are exercised jointly by the cases below, exactly as §22.8's
+table is exercised by the `PUB` family above rather than getting cases of its own.
+
+| id | req | clause | checks | input | expect | status |
+|----|-----|--------|--------|-------|--------|--------|
+| DMTAP-PUBSUB-01 | MUST | §25.4.1 | **`Subscription` content address and signing preimage.** `subscription_id = 0x1e‖BLAKE3-256(det_cbor(Subscription))` over the complete, signed object (the derived-anchor rule, §18.9.4); `sig` is `signer` over `"DMTAP-PUB-v0/subscription"‖0x00‖det_cbor(Subscription ∖ {10})` | construction: build a well-formed `Subscription`, compute `subscription_id` and the signing preimage per the stated formulas, then flip one bit of `sig` and re-verify | accept (recomputed `subscription_id` matches; unmodified `sig` verifies); reject the flipped-bit variant → `ERR_PUB_SUBSCRIPTION_SIG_INVALID` (0x090E), FAIL_CLOSED_BLOCK | construction-todo |
+| DMTAP-PUBSUB-02 | MUST | §25.4.1 | **`signer` must be authorized by `subscriber`.** A `Subscription` whose `signer` has no valid, unrevoked `DeviceCert` chain to `subscriber` MUST be rejected, exactly as §22.3.3 step 4 checks a `PubAnnounce`'s `signer` against `pub` | construction: a validly self-signed `Subscription` whose `signer` key carries no `DeviceCert` from `subscriber` | reject → `ERR_PUB_SUBSCRIPTION_SIG_INVALID` (0x090E), FAIL_CLOSED_BLOCK | construction-todo |
+| DMTAP-PUBSUB-03 | MUST | §25.4.2 | **`expires` is mandatory — no indefinite subscription exists.** A `Subscription` CBOR map lacking key `7` is malformed | construction: `Subscription` with key 7 (`expires`) omitted | reject (malformed on decode) | construction-todo |
+| DMTAP-PUBSUB-04 | MUST | §25.4.2, §25.5.2 | **An expired `Subscription` MUST NOT be honored.** A holder that still treats a `Subscription` as active, or pushes a `FeedHint` under it, once the current time passes `expires` | construction: a validly-signed `Subscription` with `expires` in the past, presented to (or already held by) a holder | reject/stop → `ERR_PUB_SUBSCRIPTION_EXPIRED` (0x090F), FAIL_CLOSED_BLOCK | construction-todo |
+| DMTAP-PUBSUB-05 | MUST | §25.5.1 | **`SubscriptionRevoke` is same-subscriber only.** `signer` must equal the target `Subscription.subscriber` (or an authorized device thereof); a revoke signed by any other identity MUST be rejected, borrowing the same-author discipline `supersedes` applies to announces (§22.3.4) | construction: a `SubscriptionRevoke` naming a real `subscription_id`, but `signer`/`sig` belonging to a *different* identity than that `Subscription`'s `subscriber` | reject → `ERR_PUB_SUBSCRIPTION_REVOKE_INVALID` (0x0911), FAIL_CLOSED_BLOCK | construction-todo |
+| DMTAP-PUBSUB-06 | MUST | §25.5.2 | **A revoked `Subscription` MUST NOT be honored again.** Once a valid `SubscriptionRevoke` naming a `subscription_id` has been accepted, that `Subscription` MUST NOT justify further hint service | construction: accept a valid `SubscriptionRevoke` for a `Subscription`, then re-present that same `Subscription` (unexpired) to request continued/renewed hint service | reject → `ERR_PUB_SUBSCRIPTION_REVOKED` (0x0910), FAIL_CLOSED_BLOCK | construction-todo |
+| DMTAP-PUBSUB-07 | MUST | §25.6.4, §2.7, §9.2 | **An unsolicited `FeedHint` is an ordinary cold-sender case, not a wire fault.** A `feed_hint` MOTE (kind 0x41) arriving at a recipient with no matching active `Subscription` record for that `(pub, topic)` MUST receive exactly the §2.7/§9.2 cold-sender disposition — no new error code exists for this, because nothing is malformed | construction: a validly-formed, validly-signed `feed_hint` MOTE from a publisher the recipient never subscribed to | accept (deferred to the requests area per §2.7a, rate-limited, never surfaced as a normal notification, not acked); surfacing it as an ordinary delivered hint is non-conformant | construction-todo |
+| DMTAP-PUBSUB-08 | MUST | §25.6.3, §22.3.3 | **An inlined `FeedHint.announce` MUST be independently verified before use.** Presence of inline bytes is never a trust shortcut: a client MUST recompute `announce_id` and verify `sig`/`signer` exactly as for a pulled `PubAnnounce` | construction: a `FeedHint` whose inlined `announce` bytes decode to a `PubAnnounce` with a tampered `sig` (or a recomputed `announce_id` that does not match the `seq`/`tip` it claims to represent) | reject (treat exactly as a pulled announce would be treated) → `ERR_PUB_ANNOUNCE_SIG_INVALID` (0x0904) / `ERR_PUB_ANNOUNCE_ID_MISMATCH` (0x0905), per §22.3.3; accepting the inlined bytes on the strength of their presence alone is non-conformant | construction-todo |
+| DMTAP-PUBSUB-09 | MUST | §25.6.2 | **`FeedHint.seq`/`tip` are advisory, never authoritative.** A client MUST NOT advance its accepted-`seq` watermark (§22.4.2) or treat content as delivered from a hint's `seq`/`tip` alone, without an independently verified `feed_head`/`feed_range` fetch | construction: a `FeedHint` claiming `seq = 5` for a feed whose independently fetched and verified current `FeedHead` is actually `seq = 3` (a stale or confused hint origin) | accept (the hint is disregarded as evidence; the client's accepted `seq` remains whatever the verified fetch shows); advancing the watermark from the hint value alone is non-conformant | construction-todo |
+| DMTAP-PUBSUB-10 | MUST | §25.3.3 | **Topic backward compatibility.** A publisher's pre-existing (pre-topic) `FeedEntry`/`FeedHead` chain MUST remain, byte-for-byte, the `topic = ""` feed; `feed_head(pub)` (no topic) and `feed_head(pub, topic="")` MUST resolve to the identical object | construction: a publisher operating a §22 feed before adopting topics; compare `feed_head(pub)` fetched by a topic-unaware peer against `feed_head(pub, "")` fetched by a topic-aware one after topic adoption | accept (byte-identical `FeedHead`); any discontinuity (renumbered `seq`, different `tip`) is non-conformant | construction-todo |
+| DMTAP-PUBSUB-11 | MUST | §25.7.1 | **Publisher-side subscriber-admission bound.** A holder MUST apply an aggregate admission policy (count/rate) over active `Subscription`s per feed/topic | construction: a `feed_subscribe` MOTE presented past a holder's configured per-publisher subscriber-count quota | reject → `ERR_PUB_SUBSCRIBE_QUOTA` (0x0912), DENY_POLICY | construction-todo |
+| DMTAP-PUBSUB-12 | MUST | §25.7.2 | **Subscriber-side dual-ended hint-rate bound.** A subscriber's own node MUST enforce a bounded inbound `FeedHint` rate per publisher/topic, independent of the publisher's own limiter, mirroring the dual-ended Wake budget (§4.9.4) | construction: a publisher (or a compromised/misbehaving relay) floods `feed_hint` MOTEs past the subscriber's configured per-publisher budget | reject (excess dropped) → `ERR_PUB_HINT_RATE_LIMITED` (0x0913), DROP_SILENT | construction-todo |
+| DMTAP-PUBSUB-13 | MUST | §25.4.1, §25.5.1 | **Unknown PUBSUB object version/suite.** A `Subscription`/`SubscriptionRevoke` carrying a `v`/`suite` this implementation does not support MUST be rejected, never guessed — the same rule §22.3.1/§22.4.1 apply to `PubAnnounce`/`FeedHead`, extended in scope to this appendix's objects | construction: `Subscription` with `v = 1` (any value ≠ 0) | reject → `ERR_PUB_UNSUPPORTED_VERSION` (0x0901), FAIL_CLOSED_BLOCK | construction-todo |
+| DMTAP-PUBSUB-14 | MUST | §25.4.1 | **`topic` is a mandatory field (MAY be empty).** A `Subscription` CBOR map lacking key `5` is malformed — `""` (present, empty) is the only spelling of "the default feed"; absence is not a synonym for it | construction: `Subscription` with key 5 (`topic`) omitted | reject (malformed on decode) | construction-todo |
+| DMTAP-PUBSUB-15 | MUST | §25.9 | **Bounded-lifetime and cooperative-revoke disclosure (client UX, no wire bytes).** Before issuing a `Subscription` on the user's behalf, a client MUST disclose that the underlying feed is plaintext/public (unchanged from §22.9) and that a revoke is honored cooperatively — a non-cooperating or partitioned holder MAY continue hinting until the subscription's own `expires`, never indefinitely but not necessarily instantly | manual attestation (implementer/UX review — see "How to read a case" `status: manual-attestation`) | non-conformant if either disclosure is missing | manual-attestation |
 
 ---
 

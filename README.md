@@ -257,6 +257,7 @@ reference code. Where the reference and the spec disagree, **the spec wins**. By
 | 22 | [`22-public-objects.md`](22-public-objects.md) | **DMTAP-PUB** (extension) — public signed announces, plaintext-addressed public blobs, author feeds, trustless serving |
 | 23 | [`23-cad-artifact-profile.md`](23-cad-artifact-profile.md) | **CAD / artifact profile** over DMTAP-PUB — artifact metadata & licensing (SPDX), revisions/forks, assembly Merkle-DAG / BOM |
 | 24 | [`24-video-profile.md`](24-video-profile.md) | **Video / media profile** over DMTAP-PUB (the vidmesh convergence path) — channels=feeds, VideoManifest + signed rendition derivations, comments/reactions/follows, HLS as serving-layer, optional live streaming |
+| 25 | [`25-pubsub.md`](25-pubsub.md) | **DMTAP-PUBSUB** (extension of DMTAP-PUB) — signed, revocable `Subscription`/`SubscriptionRevoke`, topic addressing at zero wire cost, push delivery as ordinary MOTEs (`FeedHint`, pull-with-push-hint), fan-out governed by §9.9 |
 
 A typeset PDF ([`dmtap.pdf`](dmtap.pdf)) is generated from these files.
 
@@ -273,34 +274,35 @@ them (the numbered sections govern the normative bytes).
 | [`substrate/SYNC.md`](substrate/SYNC.md) | ③ Sync | **The one new spec** — signed multi-author CRDT ops, version-vector + range-Merkle reconciliation, signed snapshots, sparse namespace sync |
 | [`substrate/ROLES.md`](substrate/ROLES.md) | ④ Roles + ⑤ Wake | Infrastructure roles as an open key-addressed protocol + content-free wake (RFC 8030/8291/8292) |
 
-**Conformance coverage (honest status).** The [`conformance/`](conformance/) catalog has **328
+**Conformance coverage (honest status).** The [`conformance/`](conformance/) catalog has **343
 numbered cases** (SUITE.md ≡ suite.json). **62 are byte-runnable today** — 56 vectored cases
 backed by known-answer vectors (**69 core vectors** in `vectors/vectors.json` + **15 DMTAP-PUB
-vectors** in `vectors/pub_vectors.json`) plus 6 self-contained canonical-CBOR reject cases; **249
+vectors** in `vectors/pub_vectors.json`) plus 6 self-contained canonical-CBOR reject cases; **263
 carry an exact construction recipe** and expected §21 error, pending vectors for subsystems not
 yet byte-pinned (mixnet / MLS / gateway / auth and the wave-2/3 families, the wave-6 anti-drift
 families `MIXPROF`/`FLEET`/`GUARD`/`LOC`/`FLOOR`/`FAILCLASS`/`GWROLE`, the gateway families
-`GWOPS`/`GWSMTP`/`GWATT`/`GWNAME`/`GWFLOOR`/`GWLEG`, plus the profile-level `CAD`/`VIDEO`
-checklists); and 17 are manual-attestation cases — the MUSTs with no wire bytes to
-recompute at all (an in-product disclosure, a client's claim about a session or an address, a
-process boundary, or the population a deployment serves), verified by implementer or
-deployment review rather than by a runner (56 + 6 + 249 + 17 = 328). 157 of the 183 reject
-cases name one of the **144 codes** in the §21 registry; the other 26 reject at a level the
-registry does not code for — a known-answer verification that simply returns false, a
-profile-checklist item (`CAD`/`VIDEO`), or an offline validation of a descriptor, a `BootstrapSet`
-or a registration request, none of which is a wire failure a peer is told about. So the runnable ratio is **61/327 today**,
-growing as each subsystem gains a fixed-input KAT.
+`GWOPS`/`GWSMTP`/`GWATT`/`GWNAME`/`GWFLOOR`/`GWLEG`, the profile-level `CAD`/`VIDEO` checklists, and
+the DMTAP-PUBSUB guards `PUBSUB`, §25); and 18 are manual-attestation cases — the MUSTs with no
+wire bytes to recompute at all (an in-product disclosure, a client's claim about a session or an
+address, a process boundary, or the population a deployment serves), verified by implementer or
+deployment review rather than by a runner (56 + 6 + 263 + 18 = 343). Of the (non-self-contained)
+reject cases, 140 name one of the **144 codes** in the core §21.3–§21.11 registry; the rest reject
+either against an extension registry code (`ERR_PUB_*`, §21.24b/§21.24d) or at a level no registry
+codes at all — a known-answer verification that simply returns false, a profile-checklist item
+(`CAD`/`VIDEO`/`PUBSUB`), or an offline validation of a descriptor, a `BootstrapSet` or a
+registration request, none of which is a wire failure a peer is told about. So the runnable ratio
+is **62/343 today**, growing as each subsystem gains a fixed-input KAT.
 
 **Normative coverage, and what it is not.** `make coverage` reports **100% of IMPL MUSTs sit in a
 section some case cites** — measured against the curated denominator in
-[`conformance/scope.json`](conformance/scope.json), which classifies all 333 MUST-bearing sections
+[`conformance/scope.json`](conformance/scope.json), which classifies all 345 MUST-bearing sections
 and states a reason for each. Three limits are structural, not temporary, and are printed by the
 tool itself so the figure never travels without them: it is **section-level, not MUST-level** (a
 section counts as covered if *any* case cites it); it counts cases that **exist**, not cases that
 **pass** — no implementation has been run against this suite; and the denominator is a
 **judgement**, so the intended response to disagreeing with a classification is to reclassify it
-`IMPL` and write the case. The uncurated figure over every capitalised MUST is **84%**, and
-`make coverage` prints both.
+`IMPL` and write the case. The uncurated figure over every capitalised MUST is **84%**,
+and `make coverage` prints both.
 
 ## Building the PDF
 

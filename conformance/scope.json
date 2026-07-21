@@ -2681,6 +2681,102 @@
       "musts": 3,
       "class": "IMPL",
       "reason": "implementation requirement on a conformant node/client/gateway"
+    },
+    {
+      "section": "25.3.3",
+      "file": "25-pubsub.md",
+      "title": "25.3.3 Backward compatibility (normative)",
+      "musts": 2,
+      "class": "IMPL",
+      "reason": "implementation requirement on a conformant node/client/gateway"
+    },
+    {
+      "section": "25.4.1",
+      "file": "25-pubsub.md",
+      "title": "25.4.1 `Subscription`",
+      "musts": 11,
+      "class": "IMPL",
+      "reason": "implementation requirement on a conformant node/client/gateway"
+    },
+    {
+      "section": "25.4.2",
+      "file": "25-pubsub.md",
+      "title": "25.4.2 Bounded lifetime is mandatory, not a default (normative)",
+      "musts": 2,
+      "class": "IMPL",
+      "reason": "implementation requirement on a conformant node/client/gateway"
+    },
+    {
+      "section": "25.5.1",
+      "file": "25-pubsub.md",
+      "title": "25.5.1 `SubscriptionRevoke`",
+      "musts": 5,
+      "class": "IMPL",
+      "reason": "implementation requirement on a conformant node/client/gateway"
+    },
+    {
+      "section": "25.5.2",
+      "file": "25-pubsub.md",
+      "title": "25.5.2 Effect (normative)",
+      "musts": 2,
+      "class": "IMPL",
+      "reason": "implementation requirement on a conformant node/client/gateway"
+    },
+    {
+      "section": "25.6.2",
+      "file": "25-pubsub.md",
+      "title": "25.6.2 The `FeedHint` object (kind `0x41`) — advisory, never authoritative",
+      "musts": 8,
+      "class": "IMPL",
+      "reason": "implementation requirement on a conformant node/client/gateway"
+    },
+    {
+      "section": "25.6.3",
+      "file": "25-pubsub.md",
+      "title": "25.6.3 Bounded inline delivery (a bounded form of true push)",
+      "musts": 3,
+      "class": "IMPL",
+      "reason": "implementation requirement on a conformant node/client/gateway"
+    },
+    {
+      "section": "25.7.1",
+      "file": "25-pubsub.md",
+      "title": "25.7.1 Publisher-side: admission bound",
+      "musts": 1,
+      "class": "IMPL",
+      "reason": "implementation requirement on a conformant node/client/gateway"
+    },
+    {
+      "section": "25.7.2",
+      "file": "25-pubsub.md",
+      "title": "25.7.2 Subscriber-side: dual-ended rate bound (mirrors §4.9.4)",
+      "musts": 1,
+      "class": "IMPL",
+      "reason": "implementation requirement on a conformant node/client/gateway"
+    },
+    {
+      "section": "25.8",
+      "file": "25-pubsub.md",
+      "title": "25.8 Wire allocations & capability negotiation",
+      "musts": 3,
+      "class": "IMPL",
+      "reason": "implementation requirement on a conformant node/client/gateway"
+    },
+    {
+      "section": "25.9",
+      "file": "25-pubsub.md",
+      "title": "25.9 Client requirements",
+      "musts": 3,
+      "class": "IMPL",
+      "reason": "implementation requirement on a conformant node/client/gateway"
+    },
+    {
+      "section": "25.10",
+      "file": "25-pubsub.md",
+      "title": "25.10 Conformance & fail-closed table",
+      "musts": 1,
+      "class": "IMPL",
+      "reason": "implementation requirement on a conformant node/client/gateway"
     }
   ]
 }

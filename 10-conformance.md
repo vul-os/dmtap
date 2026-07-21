@@ -76,22 +76,23 @@ The **conformance test suite** is the *operational definition* of compatibility.
 means "passes the suite," not "resembles the reference." This is the primary defense against
 fragmentation. The suite lives in `conformance/` as three coupled artifacts:
 
-- **`conformance/SUITE.md`** — the normative test-case catalog: 328 numbered cases
+- **`conformance/SUITE.md`** — the normative test-case catalog: 343 numbered cases
   (`DMTAP-<category>-<NN>`) grouped by the levels above, each pinning its spec clause, input,
   expected result (accept / reject + the §21 error code), and MUST/SHOULD.
 - **`conformance/suite.json`** — the machine-readable mirror of those cases, so a runner in **any
-  language** can drive them. It mirrors all 328 (SUITE.md and suite.json are in sync — the wave-2
+  language** can drive them. It mirrors all 343 (SUITE.md and suite.json are in sync — the wave-2
   deniable-1:1 and KT-v1-hardening families, the `PROFILE` display-data cases, the optional
   `PUSH` wake-signaling cases, the `FILE` durability cases, the wave-3 device-cluster `SYNC`,
   `ALIAS`, and gateway-alias `GWALIAS` families, the pluggable-resolver `RESOLVE` family, the
-  `PUB` public-object family, and the wave-6 anti-drift families — Bootstrap profile
+  `PUB` public-object family, the wave-6 anti-drift families — Bootstrap profile
   (`MIXPROF`, §4.4.10a), derived fleet view (`FLEET`, §4.4.2), guards and path diversity
   (`GUARD`, §4.4.8), location/resolution order (`LOC`, §4.2), the zero-relationship delivery
   floor (`FLOOR`, §9.7a/§9.4.1), failure classes (`FAILCLASS`, §10.7.0) and gateway role
   boundaries (`GWROLE`, §7.1b/§7.11.4), the gateway families (`GWOPS`/`GWSMTP`/`GWATT`/`GWNAME`/
-  `GWFLOOR`/`GWLEG`, §7), the auth families (`AUTHORIG`/`AUTHSESS`/`AUTHBRIDGE`, §13), and the
+  `GWFLOOR`/`GWLEG`, §7), the auth families (`AUTHORIG`/`AUTHSESS`/`AUTHBRIDGE`, §13), the
   transport, privacy, client, naming, group, anti-abuse, seam, scale, state-machine,
-  forward-compatibility and wire-object families — are mirrored).
+  forward-compatibility and wire-object families, and the DMTAP-PUBSUB family (`PUBSUB`, §25) —
+  are mirrored).
 - **`conformance/scope.json`** — the **curated MUST denominator** the coverage metric measures
   against: every one of the specification's MUST-bearing sections classified `IMPL` / `ENCODING` /
   `RESTATEMENT` / `PROCEDURE` / `NARRATIVE` with a one-line reason, because not every capitalised
@@ -100,37 +101,38 @@ fragmentation. The suite lives in `conformance/` as three coupled artifacts:
   policies bind a future registrant). Inclusion is the default: a section is `IMPL` unless the
   reason names what owns the requirement instead.
 - **`conformance/vectors/`** — the byte-exact known-answer vectors the cases dispatch on:
-  `vectors.json` holds 69 core vectors (derived from the §18 canonical CBOR; 42 of them are
+  `vectors.json` holds 69 core vectors (derived from the §18 canonical CBOR; 43 of them are
   driven by cases today, the other 26 are pre-generated for construction-todo families not yet
   wired to a case) and `pub_vectors.json` holds 15 vectors for the §22 DMTAP-PUB profile (all 15
-  driven by `PUB` cases).
+  driven by `PUB` cases). DMTAP-PUBSUB (§25) generates no new vectors of its own (§10.3 below).
 
 62 cases are byte-runnable today (56 vector-backed against `vectors.json`/`pub_vectors.json` +
 6 self-contained canonical-CBOR reject cases); 17 further cases are verified by implementer or
 deployment attestation, having **no wire bytes to recompute at all** — an in-product disclosure
-(§22.7 publish consent, §4.4.10a's Bootstrap degradation notice), a client's own claims about a
-session or an address (§7.10.6, §7.15.3), a process boundary (§7.1b), or the population a
-deployment actually serves (§7.15.4); they are the rows marked `manual-attestation` in
-`conformance/SUITE.md`, each naming the review that settles it. The remaining 249 carry an exact construction recipe and expected §21 error for the
+(§22.7 publish consent, §4.4.10a's Bootstrap degradation notice, §25.9's bounded-lifetime /
+cooperative-revoke disclosure), a client's own claims about a session or an address (§7.10.6,
+§7.15.3), a process boundary (§7.1b), or the population a deployment actually serves (§7.15.4);
+they are the rows marked `manual-attestation` in `conformance/SUITE.md`, each naming the review
+that settles it. The remaining 263 carry an exact construction recipe and expected §21 error for the
 branches whose subsystems are not yet vectored (mixnet/MLS/gateway/auth, plus the wave-2
 deniable/KT-v1/org/device-attestation families, the `FILE` durability guards, the `PROFILE`
 display-data guards, the optional `PUSH` wake-signaling guards, the wave-6 anti-drift families
 (`MIXPROF`/`FLEET`/`GUARD`/`LOC`/`FLOOR`/`FAILCLASS`/`GWROLE`), the gateway families
-(`GWOPS`/`GWSMTP`/`GWATT`/`GWNAME`/`GWFLOOR`/`GWLEG`), and the profile-level `CAD`/`VIDEO`
-checklists — see `conformance/README.md`). The partition is exact: 62 + 17 + 249 = 328. An
-implementation conforms at a level iff it passes every `MUST` case of that level and of every level
-it composes.
+(`GWOPS`/`GWSMTP`/`GWATT`/`GWNAME`/`GWFLOOR`/`GWLEG`), the profile-level `CAD`/`VIDEO` checklists,
+and the DMTAP-PUBSUB guards (`PUBSUB`, §25) — see `conformance/README.md`). The partition is exact:
+62 + 18 + 263 = 343. An implementation conforms at a level iff it passes every `MUST` case of that
+level and of every level it composes.
 
 **On the coverage figure.** `make coverage` reports that **100%** of `IMPL` MUSTs sit in a section
 some case cites. That is a **floor and a section-level measure**: a section counts as covered if
 *any* case cites it, not if every MUST in it is exercised; it counts cases that **exist**, not
-cases that **pass** (62 of 328 are byte-runnable today, and no implementation has yet been run
+cases that **pass** (62 of 343 are byte-runnable today, and no implementation has yet been run
 against the suite); and it is measured against a **curated** denominator whose classification is a
 judgement, auditable in `conformance/scope.json` and re-checkable by `make lint` (check C10, which
 fails the build if a MUST-bearing section is left unclassified). The uncurated figure over every
-capitalised MUST is **84%**. Read the number as "nothing implementable is entirely unattended",
-never as a pass mark. The reference `dmtap-core` self-check test drives the vectors, but the spec plus these
-three artifacts are authoritative (§10.4), not the reference.
+capitalised MUST is **84%**. Read the number as "nothing implementable is entirely
+unattended", never as a pass mark. The reference `dmtap-core` self-check test drives the vectors,
+but the spec plus these three artifacts are authoritative (§10.4), not the reference.
 
 ## 10.4 The spec is authoritative
 

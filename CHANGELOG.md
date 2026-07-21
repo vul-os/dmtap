@@ -11,6 +11,40 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **§25 DMTAP-PUBSUB: a signed `Subscription`/`SubscriptionRevoke`, topic addressing, and
+  push-hint delivery, layered on DMTAP-PUB (§22).** Closes the gap that §22's author feeds (public,
+  pull-only), MLS channels (private, closed-membership, TreeKEM-churn-bound) and JMAP push
+  (client-to-own-node only) leave open: machine-oriented event distribution with a real, revocable
+  subscription object. Four additions, all additive and capability-negotiated (`pubsub-1`): a
+  signed, mandatorily-expiring `Subscription` (§25.4) and same-author-only `SubscriptionRevoke`
+  (§25.5); topic addressing at the serving/locator layer only, zero wire-object change (§25.3); new
+  entries pushed as ordinary sealed MOTEs (`FeedHint`, kind `0x41`) riding the existing §2.6
+  deliver/ack/retry path — no new reliability machinery — with `seq`/`tip` advisory-only and never a
+  substitute for verified pull (§25.6); and fan-out explicitly governed by §9.9's existing
+  group-address rules rather than a new anti-abuse model (§25.7). Default is pull-with-push-hint,
+  not true push, because a publisher tracking per-subscriber delivery state is exactly the durable
+  middle-state §0.5's architecture exists to avoid; a bounded inline-announce optimization is the
+  one deliberately-scoped exception (§25.6.3). Stated honestly: encrypted broadcast to a large open
+  subscriber set remains out of scope for v1 (§25.11 item 1) — MLS gives confidentiality with known
+  membership, §22/§25 give scale with plaintext, and wanting both at once is unsolved, not
+  overlooked. No core wire change: no existing object gains a field, no `Envelope.v`/DNS `v=` bump,
+  no flag day. New allocations: message kinds `0x41`–`0x43` (§21.16), capability `pubsub-1`
+  (§21.22), six error codes `0x090E`–`0x0913` *within* the existing DMTAP-PUB subsystem byte `0x09`
+  (§21.24d — an extension of an extension, not a new subsystem), and two DS-tags. Conformance: 15
+  new `PUBSUB` cases (328 → **343**; partition 56 + 6 + 263 + 18 = 343); no new vectors
+  (`conformance/vectors/` unchanged).
+- **Fixed a latent one-case undercount that had propagated into five prose statements.** The
+  `SUITE` family's own coverage-table row (`conformance/SUITE.md`) had not been updated when
+  `DMTAP-SUITE-11` was added in the previous commit, undercounting the catalog by exactly one
+  vectored case everywhere that row's total fed into: `SUITE.md`'s own `Total` row and two
+  paragraphs (327/55/61/68/42/43 → 328/56/62/69/43/44), and `conformance/README.md`'s
+  byte-runnable-count sentence (which additionally already disagreed with its *own* next
+  paragraph two lines down before this fix). `conformance/suite.json`'s top-level
+  `vectors_count`/`referenced_vectors_count` fields carried the same stale 68/42. All now agree
+  with the ground truth in `vectors.json`/`suite.json` (69 vectors, 43 driven by cases). Also
+  softened the unreproducible "157 of the 183 reject cases..." breakdown in `README.md` to a
+  claim actually verifiable from `suite.json` — the original split predates this fix and could not
+  be reconciled with either the pre- or post-fix case set under any counting rule tried.
 - **Conformance: 22 cases for the new normative requirements** (172 → **194**), closing the gap the
   hardening and one-binary-with-roles commits left open — a MUST with no case is unenforceable, and
   §10.3 makes the suite the operational definition of compatibility. New families: `MIXPROF`
