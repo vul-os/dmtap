@@ -90,7 +90,12 @@ and on `reject` MUST map it to the named §21 error code with that code's `Actio
 | **Core** — the operator seam & the inviolable rule (`SEAM`) | 4 | 0 | 0 | 4 | 0 |
 | **Core** — roles at scale: fleet, thin clients, buffers & status pages (`SCALE`) | 5 | 0 | 0 | 5 | 0 |
 | **Core** — hybrid-suite composition (`HYBRID`) | 1 | 0 | 0 | 1 | 0 |
-| **Total** | **293** | **46** | **6** | **225** | **16** |
+| **Core** — state-machine totality, the §20 [fill] rules (`FSM`) | 5 | 0 | 0 | 5 | 0 |
+| **Core** — forward compatibility, the three unknown-value rules (`FWDCOMPAT`) | 3 | 0 | 0 | 3 | 0 |
+| **Core** — DMTAP-PUB publication guards, optional `pub-1` (`PUBGUARD`) | 3 | 0 | 0 | 2 | 1 |
+| **Core** — CAD assembly structure, optional `pub-1` (`CADASM`) | 1 | 0 | 0 | 1 | 0 |
+| **Core** — video hints, migration & attestation badges, optional `pub-1` (`VIDMIG`) | 3 | 0 | 0 | 3 | 0 |
+| **Total** | **308** | **46** | **6** | **239** | **17** |
 
 The 46 vectored + 6 self-contained cases (**52**) are fully machine-runnable **today** from
 `vectors.json` / `pub_vectors.json` + the inline bytes here, with **no reference implementation
@@ -102,7 +107,7 @@ root, the announce and feed-head signing preimages, `announce_id`, the prev-chai
 type-incompatibility with sealed manifests, the same-author supersede rule, and feed anti-rollback
 incl. the idempotent-refetch and fork/equivocation branches).
 
-The 225 `construction-todo` cases give the exact recipe and expected §21 error for every remaining
+The 239 `construction-todo` cases give the exact recipe and expected §21 error for every remaining
 normative branch — the full §2.7 pipeline, identity/KT fail-closed, the higher levels, the
 hardening families (`DENIABLE`/`ORG`/`KTV1`/`ATTEST`), the `PROFILE` display-data guards, the
 pluggable-resolver guards (`RESOLVE`), the optional `PUSH` wake-signaling guards, the `FILE`
@@ -112,7 +117,7 @@ durability guards, the anti-drift families
 vectored, and the profile-level `CAD` and `VIDEO` checklists. Each becomes byte-backed when the
 corresponding subsystem gains a fixed-input KAT (see README "Coverage vs. deferred").
 
-The 16 `manual-attestation` cases are the MUSTs with **no wire bytes to recompute**: an in-product
+The 17 `manual-attestation` cases are the MUSTs with **no wire bytes to recompute**: an in-product
 disclosure, a share sheet, a process boundary or the population a deployment actually serves. They
 are identified by `manual-attestation` in the **status** column, and each names the review that
 settles it — client-UX review, operator-copy review, or deployment review.
@@ -120,7 +125,7 @@ settles it — client-UX review, operator-copy review, or deployment review.
 is the honest status, not a placeholder for a vector that could exist.
 
 **Sync status:** `SUITE.md` and [`suite.json`](suite.json) are **in sync** — both carry the same
-**293** case ids, and `make lint` (check C5) fails the build if they ever disagree, or if any
+**308** case ids, and `make lint` (check C5) fails the build if they ever disagree, or if any
 document states a different count. The changed deniable objects (§5.2.1 dedicated-`idk`) are still
 to be re-vectored when the reference regenerates `vectors.json`.
 
@@ -1120,6 +1125,94 @@ the suite byte.
 | id | req | clause | checks | input | expect | status |
 |----|-----|--------|--------|-------|--------|--------|
 | DMTAP-HYBRID-01 | MUST | §10.7.1, §1.3, §16.7 | **A hybrid verifier requires every component.** A hybrid-suite (`0x02`) object whose PQ signature component is missing or fails, while only the classical component validates, presented to a verifier that **supports** the hybrid suite, is an incomplete/downgraded hybrid: a hybrid verifier MUST require every component signature (AND-composition) and MUST use the X-Wing KEM combiner. Single-component acceptance is for a genuinely legacy verifier only, at that component's lower assurance | construction: a `0x02` object with its PQ signature component stripped (variant: present but invalid), presented to (a) a verifier supporting `0x02`, (b) a verifier supporting only `0x01` | reject at (a) → `ERR_HYBRID_SUITE_INCOMPLETE` (0x0210), FAIL_CLOSED_BLOCK; (b) may accept at the classical component's lower assurance, and MUST NOT report that as hybrid-strength verification | construction-todo |
+
+---
+
+## State-machine totality — the [fill] rules §1–§16 leave open (§20.1, §20.3, §20.5.2, §20.6, §20.7) — `FSM`
+
+Level **Core**. §20 restates the protocol's dynamics as **total** machines: for every machine,
+every state and every applicable event, the next state and required action are defined. Where the
+body of the spec settles a transition, §20 restates it and the owning clause governs (§10.4). Where
+it does **not**, §20 makes a conservative normative choice and marks it **[fill]** — and those
+choices are owned here, tested nowhere else, and are exactly the transitions two implementations
+would otherwise resolve differently. The cases below pin the [fill] rows that have observable
+consequences.
+
+| id | req | clause | checks | input | expect | status |
+|----|-----|--------|--------|-------|--------|--------|
+| DMTAP-FSM-01 | MUST | §20.1, §4.7, §2.6 | **A late `ack` corrects the display and reverses nothing.** §4.7 and §2.6 do not address an `ack` arriving after the sender has already given up — a peer-buffer drain (§14.5) can deliver long after `EXPIRED`. §20.1 makes the choice: the sender MUST treat it idempotently, surfacing a "delivered late" correction, and MUST NOT re-send and MUST NOT re-open the deadline. The protocol outcome does not reverse; only the user-facing status corrects | construction: drive a MOTE to `EXPIRED` at the §16.1 deadline, then deliver a valid `ack` for its `id` from a draining buffer; observe the state, any outbound dispatch, and the timer | accept (state remains `EXPIRED`, no re-send, no re-opened deadline, and a "delivered late" correction surfaced); re-entering `RETRY`, re-arming the deadline, or discarding the late `ack` without correcting the display are all non-conformant | construction-todo |
+| DMTAP-FSM-02 | MUST | §20.3, §3.3, §3.4 | **Transient and definitive resolution failures are different states.** §3.3's three named outcomes are about *KT* unreachability, not DNS itself, so §20.3 fills the gap: a transient failure (timeout, SERVFAIL, no connectivity) is **not an answer** and bounces to `UNRESOLVED` for the caller's retry schedule, while a definitive negative (authoritative NXDOMAIN, or a zone publishing no `_dmtap` record) is terminal for the attempt and surfaces "name not found" — it MUST NOT be auto-retried as though it were a fault. Separately, a chain that does not validate goes straight to `FAIL_CLOSED_BLOCKED` rather than being retried, and a dismissed `SECURITY_ALERT` keeps routing to the **old** pinned key | construction: resolve a name under (a) SERVFAIL, (b) authoritative NXDOMAIN, (c) an `Identity` whose signature chain does not validate, (d) a key change with an invalid chain that the user then dismisses; observe the state, the retry behaviour and which key subsequent messages route to | (a) retries on the caller's schedule; (b) reject → `ERR_NAME_RESOLUTION_FAILED` (0x0109), terminal for this attempt and not auto-retried; (c) `FAIL_CLOSED_BLOCKED`, not retried; (d) the **old** pinned key remains in use and the new key is never adopted without explicit action | construction-todo |
+| DMTAP-FSM-03 | MUST | §20.6, §13.4, §16.8 | **The grace timer runs monotonically, and one bad proof is one bad request.** A re-validation attempt during the grace window that finds the endpoint still unreachable MUST NOT restart the grace timer: it runs from the *first* entry into `REVALIDATION_GRACE`, so `grace_window_elapsed` fires on schedule however many unreachable re-checks occur. Otherwise an attacker who keeps the endpoint down extends a revoked session indefinitely — by making the check fail more often. §20.6 also fills what §13.4 leaves open: a single failed DPoP proof rejects that request and keeps the session alive, because DPoP is per-request by construction | construction: partition the RP from the status endpoint and issue re-validation attempts at short intervals across the whole grace window, recording when `grace_window_elapsed` fires; separately, send one request with a bad DPoP proof followed by one with a good proof | accept (the window expires exactly 2× the re-validation interval after **first** entry, regardless of the number of failed re-checks; the bad proof rejects → `ERR_DPOP_PROOF_INVALID` (0x0506) while the following good-proof request succeeds); a restarted grace timer is non-conformant, and so is tearing down the session on one bad proof | construction-todo |
+| DMTAP-FSM-04 | MUST | §20.5.2, §16.8, §5.1 | **A quorum below `> n/2` MUST NOT rotate the committer.** A takeover Commit promoting the deterministic successor is applied only when it references the last agreed log head **and** carries a `> n/2` roster quorum of member signatures. Below that, rotation is split-brain: two partitions each electing their own successor produce two committers, which is the fork the whole ordering layer exists to prevent | construction: partition a group so that a minority observes the committer-liveness timeout (§16.8) twice; have it assemble a takeover Commit carrying exactly `⌊n/2⌋` signatures against the last agreed head | reject → `ERR_GROUP_POLICY_VIOLATION` (0x0409); the rotation does not occur and the minority holds. Applying a sub-quorum takeover is non-conformant, and a competing Commit at the same log position is fork evidence → `ERR_COMMITTER_FORK_DETECTED` (0x0404), HALT_ALERT | construction-todo |
+| DMTAP-FSM-05 | MUST | §20.7, §14.3, §4.9 | **A wake without connectivity is a benign event, and a thin client still reconciles.** For a mobile thin client `ONLINE` is transient: the client MUST still poll and reconcile rather than treating reachability as continuous. A push wake arriving with no connectivity — airplane mode — returns to `OFFLINE` and is expected, not an error, because push is wake-and-fetch and never delivery confirmation; and repeated futile wakes SHOULD be coalesced rather than driving repeated reconnect attempts | construction: deliver a wake to a thin client in airplane mode, then restore connectivity without a further wake; observe whether the queue drains on foreground and whether any error state or delivery confirmation was produced by the failed wake | accept (the failed wake yields no error and no delivery signal; the queue drains on the client's own foreground reconcile); a client that only fetches on a successful wake will lose mail whenever the platform drops one, which both APNs and FCM do by design | construction-todo |
+
+---
+
+## Forward compatibility — the three unknown-value rules (§21.20, §21.21, §21.25) — `FWDCOMPAT`
+
+Level **Core**. §21.25 restates the three unknown-value rules together **precisely because they
+differ**, and conflating them is how a protocol acquires a flag day. An unknown `suite` is a
+security-critical trust decision and is rejected outright; an unknown `kind` is not acknowledged
+but may be ignored; an unknown `ext` key is ignored and MUST NOT affect validation of the rest of
+the object at all. An implementation that hardens all three into "reject" is as non-conformant as
+one that softens all three into "ignore" — the first cannot roll out a new kind without a flag day,
+the second will accept a suite it cannot verify.
+
+| id | req | clause | checks | input | expect | status |
+|----|-----|--------|--------|-------|--------|--------|
+| DMTAP-FWDCOMPAT-01 | MUST | §21.25, §10.1, §21.20 | **Three unknown values, three different dispositions.** Unknown `suite` → **rejected**, fail-closed, no processing (`0x0101`/`0x0201`); unknown `kind` → **not acknowledged**, but MAY be silently ignored rather than rejected (`0x020A`); unknown `Headers.ext` key → **ignored**, and MUST NOT affect validation of the rest of the object. Getting any one of the three wrong in either direction is a conformance failure, which is why they are tested as one differential rather than three isolated rejects | construction: three otherwise-valid objects differing only in one unknown value — (a) `Envelope.suite = 0x7E` (unregistered), (b) `kind = 0x5A` (unassigned in the extension range), (c) a `Headers.ext` key `future-priority` the receiver does not implement | (a) reject → `ERR_UNKNOWN_VERSION_OR_SUITE` (0x0201), DROP_SILENT; (b) not acked → `ERR_KIND_UNKNOWN` (0x020A), IGNORE_NO_ACK, and MUST NOT be rejected as malformed; (c) accept — the object validates and delivers with the unknown key ignored. Rejecting (c), acking (b), or processing (a) are each independently non-conformant | construction-todo |
+| DMTAP-FWDCOMPAT-02 | MUST | §21.20, §21.21 | **Unknown keys are ignored in `ext` and in DNS alike, and `x-` keys are never assumed portable.** A receiver MUST ignore any `Headers.ext` key it does not recognize, and an unrecognized key MUST NOT cause validation failure or message rejection; the same forward-compatibility rule applies to `_dmtap`/`_dmtap-gw`/`_dmtap-mix` TXT/SVCB parameters, which resolvers MUST ignore when unrecognized. `x-`-prefixed `ext` keys are Private Use and MUST NOT be assumed portable across implementations — an implementation that depends on a peer honouring its own `x-` key has invented a private protocol and called it DMTAP | construction: (a) a `_dmtap` TXT carrying `v=`, `ik=`, and an unrecognized `futureparam=`; (b) a MOTE carrying `x-vendor-hint` in `Headers.ext` sent to an implementation that does not know it; (c) the same implementation's behaviour when its own `x-` key is absent from a peer's reply | accept all three: (a) resolves normally with the unknown parameter ignored, (b) validates and delivers with the key ignored, (c) proceeds without the `x-` key. Failing resolution on (a), rejecting (b), or degrading function on (c) are each non-conformant | construction-todo |
+| DMTAP-FWDCOMPAT-03 | MUST | §21.25, §9.3.1, §12.3 | **Two things an extension may never do.** Beyond ordinary interoperability review, every new challenge type, resolver type, DNS parameter or capability token is checked for two DMTAP-specific properties: (a) it MUST preserve the issuer-trust / zero-default-budget rule and MUST NOT create a path for a sender to manufacture its own unlimited cost relief; (b) **no** extension may be gated behind an operator's paid seam in a way that weakens privacy, cryptography or metadata protection — §12.3 binds extensions exactly as it binds the base protocol. And once allocated, a code point, key or tag MUST NOT be reused for a different meaning, even if the original allocation is abandoned | construction: three candidate extensions — (a) a challenge type whose proof is self-issued and self-scored, (b) a resolver type whose privacy-relevant verification step is reachable only through a seam capability, (c) a registration re-using a deprecated code point with new semantics | reject all three (extension review fails): (a) manufactures unlimited cost relief and voids §9.3.1, (b) puts a privacy decision behind the seam and voids §12.3, (c) breaks the append-only discipline that makes the registries — like KT (§3.5) and the committer log (§5.1) — trustworthy | construction-todo |
+
+---
+
+## Publication consent, fetcher verification & the not-blind holder (§22.2.4, §22.5.1, §22.6.1, §22.9) — `PUBGUARD`
+
+Level **Core**, optional capability **`pub-1`**. DMTAP-PUB's whole risk is that plaintext content
+addressing is a **confirmation oracle**: anyone holding a candidate file can test whether it exists
+in the public set. §22.2.4 answers that head-on — a `PubManifest` is derived only from content the
+user explicitly published, and nothing is plaintext-addressed, announced or served except as the
+result of that act. A node that content-addresses the whole store for deduplication has built the
+oracle without ever publishing anything. `-03` is `manual-attestation`: whether serving was an
+operator's choice or a default is a deployment fact, not a wire fact.
+
+| id | req | clause | checks | input | expect | status |
+|----|-----|--------|--------|-------|--------|--------|
+| DMTAP-PUBGUARD-01 | MUST | §22.2.4, §22.9, §22.7 | **Nothing is plaintext-addressed except as the result of an explicit publish act.** A `PubManifest` MUST NOT be derived from content the user has not explicitly published, and an implementation MUST NOT plaintext-address, announce or serve any object except as the result of that act. The attack this closes is confirmation: plaintext content addressing lets anyone holding a candidate file test whether it is in the public set, so deriving public addresses over private content — for deduplication, indexing or convenience — hands out that oracle for objects the user never chose to publish | construction: a store holding private objects and one published object; enumerate every plaintext content address the node computes, holds or serves, including any dedup index, thumbnail pipeline or convenience cache | accept (exactly one plaintext-addressed object — the published one); any plaintext address derived over unpublished content is non-conformant even if it is never served, because holding it is what makes the oracle answerable | construction-todo |
+| DMTAP-PUBGUARD-02 | MUST | §22.5.1, §22.2.2, §22.3.3 | **Verification is the fetcher's job, always.** A fetcher MUST verify signatures and content addresses itself. The PUB HTTP endpoint is a convenience for serving bytes, not an authority over them: a server that returns a well-formed response has said nothing about whether the bytes are the ones the author signed, and a client that trusts the transport has made the serving node into exactly the trusted third party the design removes | construction: a PUB endpoint serving (a) chunk bytes that do not hash to the listed `h_i`, (b) a `PubAnnounce` whose `sig` does not verify under `signer`, (c) a `PubManifest` whose recomputed DS-tagged Merkle root differs from its `id` — each returned with a `200` and correct content type | reject → `ERR_PUB_CHUNK_HASH_MISMATCH` (0x090A), `ERR_PUB_ANNOUNCE_SIG_INVALID` (0x0904) and `ERR_PUB_MANIFEST_HASH_MISMATCH` (0x0909) respectively; accepting any of them on the server's `200` is non-conformant | construction-todo |
+| DMTAP-PUBGUARD-03 | MUST | §22.6.1, §6.6 | **Serving public objects is an explicit operator choice, never automatic.** A node advertising `pub-1` and serving public objects is **not content-blind** for what it serves — unlike every other holder role in DMTAP, which handles ciphertext it cannot read. Because that changes what the operator knows and what they may be asked about, it MUST be an explicit operator choice and MUST NOT be switched on by default or as a side effect of enabling something else | manual attestation (deployment review: whether `pub-1` serving is off until an operator turns it on, whether enabling any adjacent feature turns it on implicitly, and whether the operator is told they are no longer content-blind for what they serve) | non-conformant if public-object serving is on by default, is enabled as a side effect of another setting, or is presented without the not-content-blind disclosure | manual-attestation |
+
+---
+
+## Assembly structure (§23.6.2) — `CADASM`
+
+Level **Core**, optional capability **`pub-1`**. `AssemblyStructure` is the one CAD object with
+structural invariants an implementation can get wrong quietly: an assembly with no children is a
+part wearing the wrong kind, and a child with `quantity = 0` is a child that should have been
+omitted. The `ref_kind` distinction is the load-bearing one — `pin` names a `manifest_root` and is
+immutable, `track` names a `pub_announce` id and follows the author's revision chain.
+
+| id | req | clause | checks | input | expect | status |
+|----|-----|--------|--------|-------|--------|--------|
+| DMTAP-CADASM-01 | MUST | §23.6.2, §23.6.1 | **An assembly has children, each with a `ref_kind`, a `ref` and a `quantity ≥ 1`.** `children` is REQUIRED with at least one entry — an assembly with zero children is malformed for this profile and should have been a `part`-kind artifact. Every `AssemblyChild` carries `ref_kind` (`1` pin, `2` track), a `ref` that is a `manifest_root` when pinned and a `pub_announce` id when tracked, and a `quantity ≥ 1`: a quantity of `0` is expressed by omitting the child, never by a zero count | construction: `AssemblyStructure`s with (a) `children = []`, (b) a child with `quantity = 0`, (c) a child with `ref_kind = 1` whose `ref` is a `pub_announce` id, (d) a child missing `ref_kind`, (e) a well-formed assembly with two children at quantities 1 and 4 | reject (a)–(d) → `ERR_MALFORMED_OBJECT` (0x020D), DROP_SILENT; accept (e). Coercing `quantity = 0` to `1`, or guessing `ref_kind` from the shape of `ref`, is non-conformant — the two reference modes have different revision semantics and a guess silently changes which bytes the assembly names | construction-todo |
+
+---
+
+## Retrieval hints, migration & attestation badges (§24.4.5, §24.14, §24.17) — `VIDMIG`
+
+Level **Core**, optional capability **`pub-1`**. Two rules here, and both are about not letting a
+server's convenience become a claim about authorship. A retrieval `Hint` is advisory — bytes fetched
+from an unlisted source verify the same way, because verification is against the signed root and
+never against where the bytes came from. And migration is per-author and consensual by
+construction: re-signing an existing record needs the **author's** key, which a PUB server holding
+only plaintext never has, so a server re-attesting old content is vouching for it, not proving
+authorship — and must be rendered as visibly weaker.
+
+| id | req | clause | checks | input | expect | status |
+|----|-----|--------|--------|-------|--------|--------|
+| DMTAP-VIDMIG-01 | MUST | §24.4.5, §22.5.1 | **Hints are advisory, and unrecognized hint types are ignored.** A client MUST NOT treat a blob fetched from an unlisted source differently from one fetched from a listed hint — verification is against the signed rendition root, so provenance of the *bytes* is irrelevant once they verify. And new transports are new hint types: an unrecognized type MUST be ignored, never rejected, or every new transport becomes a flag day | construction: fetch identical, correctly-verifying rendition bytes from (a) a listed hint and (b) an unlisted source, comparing the client's acceptance and any trust marking; and supply a `Hint` of an unrecognized type alongside a usable one | accept (identical treatment for (a) and (b), and the unknown hint type ignored while the usable one is used); marking (b) as less trusted, or rejecting the object because one hint type is unknown, is non-conformant | construction-todo |
+| DMTAP-VIDMIG-02 | MUST | §24.14, §24.8, §22.3.3 | **No laundering authorship through attestation, and history stays dual-format.** Migration is per-author and consensual: re-signing an existing record requires the author's key, which a PUB server, archive or migration tool holding only plaintext never has for a self-custodied identity — so there is no bulk operator-run rewrite. Pre-migration history stays valid in its original bytes and a reader's client MUST retain the ability to verify **both** formats for as long as pre-migration content exists. A server that re-attests old content under its own key is asserting **server reputation, not authorship**, and MUST render it with a visibly weaker badge; a UI surfacing attestation provenance MUST distinguish the two cases visibly, not only in metadata a reader has to go looking for | construction: a feed mixing author-signed records and server-attested pre-migration records; inspect whether both formats still verify and how each is rendered; variant: a server-attested record presented with the same badge as an author-signed one | accept (both formats verify and the two provenances are visibly distinct in the surface itself); rendering a server attestation identically to an author signature is a security misrepresentation and is non-conformant, as is dropping the ability to verify the pre-migration format | construction-todo |
+| DMTAP-VIDMIG-03 | MUST | §24.17, §24.8 | **A similarity relation is evidence, never truth.** The `similarity` relation type (`20`) carries a near-duplicate **claim**, and a PUB server MUST NOT auto-merge on it alone. Near-duplicate detection is a heuristic over bytes an adversary chooses; merging two authors' records on it collapses two identities into one on the strength of a guess, and the §24.8 rule that a signed tally is worth exactly the attester's reputation applies here in its sharpest form | construction: two independently-authored records with a `similarity` claim asserted between them by a third party; drive the server's indexing and inspect whether the records remain distinct objects of record | accept (both records remain distinct and independently addressable; the claim is presented with its provenance); auto-merging, deduplicating or suppressing either record on the claim alone is non-conformant | construction-todo |
 
 ---
 
