@@ -62,8 +62,13 @@ default/normative or dangle refs to the moved section — reconcile to opt-in/re
 - [x] RecoveryPolicy §1.4 formal model (01/13) — Table A/D + `is_weakening()`; D0 eviction case `1aad934`.
 - [x] HPKE-mode pinned Base (02/05/18) — `712c091`.
 - [~] SYNC split minimal-core+extension + open-namespace determinism (substrate/SYNC) — **agent S in flight**.
-- [ ] premature-generality cuts (suites 0x03-0x05→appendix (16/18); compute-kind note; media-relay/
-  reachability collapse consideration (CONTRACT — hold till U frees it)) — NEXT.
+- [x] premature-generality cuts — **RE-EVALUATED, mostly REJECTED on inspection (defect doesn't
+  reproduce):** suites `0x03`-`0x05` are already `RESERVED` + honestly status-labelled and are the
+  *designed crypto-agility / emergency-pivot scaffold* (§1.1 anchor rotation, §16.7, §18.2 byte
+  arithmetic, §18.1.5 multihash) — an appendix move would dangle 30+ refs and break the migration
+  narrative, i.e. a regression not a simplification. Keep as-is. compute-kind note + media-relay/
+  reachability collapse: DEFER to critique round 2 — act only if a fresh lens confirms real
+  over-engineering (avoid a risky kind-merge that ripples into the Wakala impl + CONTRACT §5).
 - [x] multi-homing RECOMMENDED (substrate/ROLES) — `7c89506`.
 - [x] REPUTATION→OpenRank "degraded" label + personhood ≥2 + discovery/indexer + coordinator-funding
   open problems (primitives/REPUTATION, bindings, profiles, DIRECTION/SPEC) — `5d05427`.
