@@ -2216,14 +2216,17 @@ Responder: the gateway (acting as MX for the domain).
    at all.
 2. Look up the recipient key `K` for `RCPT TO` via DNS/directory (`resolve`, §19.1.1, run by the
    gateway on the recipient's behalf).
-3. Wrap the RFC 5322 message into a MOTE (`kind=0x00 mail`), encrypt to `K`.
+3. Wrap the RFC 5322 message into a MOTE (`kind=0x00 mail`) — `Payload.from` = the **gateway's
+   own** `IK` (§7.2 step 4, §7.2a; never the legacy sender's, who has none) — and encrypt to `K`.
 4. Set an **attestation**: the gateway signs `"received via gateway G at T from <SMTP
    envelope>"` under its **domain-anchored attestation key** — the key published at
-   `<sel>._dmtap-gw.<domain>. TXT` (§7.2a), never the gateway operator's own arbitrary key. On the
-   wire this is a `GatewayAttestation` object (§18.3.11) — `domain`/`selector`/`recv_at`, a
-   `msg_digest` binding it to these exact RFC 5322 bytes (§18.9.11), and the signature — placed in
-   the sealed `Payload.provenance` chain (§18.3.5 key 9), so it is the seed of the recipient's
-   transport-path provenance (§7.8) and is visible only to the recipient (§6.8).
+   `<sel>._dmtap-gw.<domain>. TXT` (§7.2a), never the gateway operator's own arbitrary key, and
+   the **same** `IK` just set as `Payload.from` in step 3 (§7.2a: the attestation key IS the
+   gateway's own `IK`). On the wire this is a `GatewayAttestation` object (§18.3.11) —
+   `domain`/`selector`/`recv_at`, a `msg_digest` binding it to these exact RFC 5322 bytes
+   (§18.9.11), and the signature — placed in the sealed `Payload.provenance` chain (§18.3.5 key
+   9), so it is the seed of the recipient's transport-path provenance (§7.8) and is visible only
+   to the recipient (§6.8).
 5. Deliver the resulting MOTE into the mesh, addressed to `K` (`deliver`, §19.3.1, run at the
    recipient's node once it arrives).
 6. Deliver, then **wait for the recipient node's `ack` (§19.3.1) within the inbound SMTP
@@ -2257,7 +2260,7 @@ can be silently lost, because `250` is emitted only after that `ack`.
 | Recipient node unreachable (all reachability-ladder rungs + buffering exhausted) | Defer | SMTP **`451`**; sending server retries per its own SMTP retry schedule — this is the *entire* durability mechanism for this path, since the gateway is stateless (§7.4) |
 | Recipient node reachable but does **not** durably `ack` within the transaction window (or only a best-effort buffer accepted the packet) | Defer | SMTP **`451`** — the gateway MUST NOT return `250` on mere hand-off; without a durable `ack` a later mesh-side `EXPIRED` (§19.3.3) would silently lose the message after the SMTP transaction closed. Deferring keeps durability in the legacy sender's queue (step 6, silent-loss avoidance) |
 | Attestation key not yet published for this domain (misconfiguration) | Reject (operational) | The gateway MUST NOT deliver an unattestable MOTE as if it were attested; implementations SHOULD refuse to accept mail for a domain whose own attestation key isn't configured, surfaced as an operator-side configuration error, not a per-message SMTP failure |
-| Recipient's node rejects the attestation (attestation key not published under the recipient's own domain, or doesn't verify, §7.2a) | Reject (at the recipient, via ordinary `deliver`, §19.3.1) | The recipient node MUST reject an attestation that does not verify and MUST mark accepted ones as legacy-origin; this is enforced recipient-side, not gateway-side — the gateway cannot force acceptance |
+| Recipient's node rejects the attestation (attestation key not published under the recipient's own domain, doesn't verify, or `Payload.from` doesn't match the published key, §7.2a) | Reject (at the recipient, via ordinary `deliver`, §19.3.1) | The recipient node MUST reject an attestation that does not verify and MUST mark accepted ones as legacy-origin; this is enforced recipient-side, not gateway-side — the gateway cannot force acceptance |
 
 **Idempotency / retry.** SMTP itself is not idempotent at the transaction level (a sending
 server retrying after `4xx` re-submits the full transaction); the resulting MOTE's `id` is a
@@ -2272,12 +2275,15 @@ gateway: pre-DATA checks — SPF pass, not on RBL, rate limit OK
 gateway → gmail-mta: 250 2.1.5 OK (proceed to DATA)
 gmail-mta → gateway: DATA ... <RFC 5322 message> ... .
 gateway: resolve alice@example.org → K=alice_ik
-gateway: wrap → MOTE{ kind:0x00, to:K, ciphertext: HPKE(K, rfc5322_bytes) }
-gateway: attest with sel._dmtap-gw.example.org key: sign("received via gateway G at T from
-                                                          bob@gmail.com")
+gateway: wrap → MOTE{ kind:0x00, to:K, from:gateway_ik, ciphertext: HPKE(K, rfc5322_bytes) }
+                # Payload.from = the GATEWAY's own IK (§7.2 step 4, §7.2a) — never
+                #   bob@gmail.com, who has no DMTAP identity/IK at all
+gateway: attest with sel._dmtap-gw.example.org key (== gateway_ik, §7.2a): sign("received via
+                                                          gateway G at T from bob@gmail.com")
 gateway: attempt-reachability(K) → alice's node reachable via relay
 gateway: deliver(mote) → mesh → alice's node
 alice's node: verify attestation sig against sel._dmtap-gw.example.org TXT record   # OK
+alice's node: verify Payload.from == that record's key (gateway_ik, §7.2a)          # OK
 alice's node: mark legacy-origin; store to inbox; ack
 gateway → gmail-mta: 250 2.6.0 message queued
 ```
