@@ -59,7 +59,9 @@ that a reader must chase to get the bytes right. References into §5.6 for *grou
   **CRDT type** (§4). A **field** further keys a register or counter within an object.
 - A **namespace** (`ns`, a short string) partitions objects into independently-syncable collections. A
   replica **subscribes** to a set of namespaces and exchanges ops only within them (§7, sparse sync). The
-  empty namespace `""` is the default single-collection case.
+  empty namespace `""` is the default single-collection case. **The namespace set is open and
+  unbounded** — this document defines no closed registry of `ns` values, and any replica or deployment
+  MAY mint a new namespace string at will; §7 states the resulting determinism guarantee normatively.
 
 ### 2.2 Determinism is the contract
 
@@ -165,6 +167,43 @@ Hlc = {
 
 An operation is the atomic, signed mutation. All six CRDT types share one op envelope; `kind` selects the
 type and dictates which fields are meaningful.
+
+### 4.0 Core vs extension primitives (normative)
+
+Not all six primitives below are part of the conformance floor. This document splits them into a
+**REQUIRED core** and **OPTIONAL extensions**, so that a first implementation of this document does not
+have to ship all six to be conformant.
+
+- **REQUIRED core.** §4.3 OR-Set, §4.4 LWW register, and §4.5 Death-certificate are grounded in the
+  existing §5.6 device-cluster CRDTs (§13) and form the substrate's minimal conformance floor. A
+  conformant SYNC implementation **MUST** implement all three, per their sections' text, and **MUST**
+  pass their §10 conformance vectors (`SYNC-ORSET-*`, `SYNC-LWW-*`, `SYNC-DEATH-*`) — see §10's tiering
+  note.
+- **OPTIONAL extensions.** §4.6 PN-counter, §4.7 RGA sequence, and §4.8 Movable tree — the three marked
+  NEW, with no §5.6 analogue — are extension primitives. A conformant implementation **MAY** omit any or
+  all of them; omitting one is not a conformance defect. An implementation that **does** implement an
+  extension primitive **MUST** do so exactly per that section's text and **MUST** pass its §10 vectors
+  (`SYNC-PN-*`, `SYNC-RGA-*`, `SYNC-TREE-01`) — there is no partial-credit implementation of a primitive.
+- **Negotiation reuses the existing value-profile mechanism — no new surface.** Which extension
+  primitives a peer accepts is exactly the kind of fact §4.1.2 exists to make askable: a peer advertises
+  what it supports rather than a caller guessing or assuming. §4.2.1 already generalizes that mechanism
+  to op kinds via the advisory `sync-1/kind-max-N` sub-token (governed by the §4.1.2 rules: carried the
+  same way, never a gate, absence means "unknown," and a producer's one conformant use is deciding
+  whether it is safe to mint an op of a given `kind`). A node that omits an extension primitive simply
+  does not advertise a `kind-max` at or above that primitive's `kind` values (§4.2); no additional
+  negotiation mechanism is introduced by this split.
+- **Reclassification, not removal.** This split changes no primitive's state, merge rule, wire shape, or
+  conformance vector. §4.9 (immutable content needs no CRDT) and §4.10 (choosing the right primitive)
+  apply to core and extension primitives alike, unchanged.
+- **Unknown/unsupported extension ops already fail closed, deterministically (§4.2.1).** An engine that
+  omits an extension primitive and receives an op of that `kind` is covered by §4.2.1's unknown-`kind`
+  rule: rejected as `ERR_SYNC_OP_INVALID` (`0x0A03`) at the point it would be applied, never silently
+  ignored, never applied on a best-effort guess, never relayed onward uncounted. This split introduces no
+  new unspecified-behaviour case — see §4.2.1's closing bullet for the one sentence that makes this
+  explicit for the in-table (but unimplemented) case.
+- **Orthogonal to sparse sync.** This is a statement about which CRDT *kinds* a replica must implement; it
+  does not interact with §7's per-**namespace** subscription. §7 states its own open-namespace
+  determinism guarantee, which holds regardless of which primitives, core or extension, a replica ships.
 
 ### 4.1 The `SyncOp` envelope
 
@@ -440,8 +479,14 @@ undesirable.
   newly-added `kind`. This gives the same "unactionable advice" gap C-13(b) closed for `ext-value`
   profiles an equivalent handle for `kind`, rather than leaving a second axis of profile drift with no way
   to ask a peer about it.
+- **Applies identically to an in-table `kind` an engine has chosen not to implement (§4.0).** The rule
+  above is written for a `kind` value outside the table; it governs an **OPTIONAL extension primitive's**
+  `kind` (§4.6–§4.8) the same way on an engine that omits that primitive — such a `kind` is, for the
+  purposes of this rule, indistinguishable from an unrecognized one at that engine, and gets the identical
+  treatment: rejected as `ERR_SYNC_OP_INVALID` (`0x0A03`), uniformly, never silently dropped in a way that
+  lets replicas diverge. The §4.0 core/extension split therefore opens no new unspecified-behaviour case.
 
-### 4.3 OR-Set — add-wins observed-remove (grounded in §5.6)
+### 4.3 OR-Set — add-wins observed-remove (grounded in §5.6; core, required — §4.0)
 
 - **State.** Per element: a set of **add-tags** `{author, hlc}` and a set of tombstoned add-tags.
 - **`set-add`** inserts a fresh, globally-unique add-tag (its own `hlc`). **`set-remove`** tombstones the
@@ -453,7 +498,7 @@ undesirable.
   post-date the remove's own HLC** ("you cannot have observed an add from the future") — a violation is
   `ERR_SYNC_OP_INVALID` (`0x0A03`). This validity is state-free, so it never depends on local order.
 
-### 4.4 LWW register — last-writer-wins by HLC (grounded in §5.6)
+### 4.4 LWW register — last-writer-wins by HLC (grounded in §5.6; core, required — §4.0)
 
 - **State.** Per `(target, field)`: a single `(hlc, value)` cell.
 - **`lww-set`** writes `(hlc, value)`. **Winner = greater HLC.** At an **exact HLC tie** (only possible
@@ -461,7 +506,7 @@ undesirable.
   string is larger** — so convergence is byte-identical even under a tie.
 - **Merge** keeps the winning cell (a join).
 
-### 4.5 Death-certificate — remove-wins durable delete (grounded in §5.6)
+### 4.5 Death-certificate — remove-wins durable delete (grounded in §5.6; core, required — §4.0)
 
 For deletions that must **not** be silently resurrected by a concurrent benign edit (privacy redactions,
 expiries, policy removals), the death dimension **dominates** the OR-Set.
@@ -485,7 +530,7 @@ expiries, policy removals), the death dimension **dominates** the OR-Set.
   write with a **strictly greater** HLC than the certificate revives an object. This closes the
   resurrection hole where a concurrent re-label would revive redacted content.
 
-### 4.6 PN-counter — increment/decrement (NEW; standard positive-negative counter)
+### 4.6 PN-counter — increment/decrement (NEW; standard positive-negative counter; extension, optional — §4.0)
 
 No §5.6 analogue exists; specified here for products that count (inventory on-hand, votes, quotas).
 
@@ -596,7 +641,7 @@ No §5.6 analogue exists; specified here for products that count (inventory on-h
 > is the flowstock choice and is often simpler than a PN-counter where every increment is an auditable
 > event. The PN-counter is for a *scalar* whose history need not be retained.
 
-### 4.7 RGA sequence — ordered list (NEW; Replicated Growable Array)
+### 4.7 RGA sequence — ordered list (NEW; Replicated Growable Array; extension, optional — §4.0)
 
 For ordered text or lists that multiple authors edit concurrently (a shared document line, an ordered
 checklist). No §5.6 analogue; specified here.
@@ -617,7 +662,7 @@ checklist). No §5.6 analogue; specified here.
 - **Merge** is set union of atoms + union of tombstones (a join); the order is recomputed by the rule
   above, so merge is order-independent.
 
-### 4.8 Movable tree — hierarchy with safe moves (NEW; cycle-safe replicated tree)
+### 4.8 Movable tree — hierarchy with safe moves (NEW; cycle-safe replicated tree; extension, optional — §4.0)
 
 For a tree that multiple authors reparent concurrently (a folder/outline/scene graph). No §5.6 analogue.
 
@@ -1349,6 +1394,14 @@ own branch.
   correct rather than merely partial.
 - **Absence is not authority.** A replica not subscribed to a namespace makes **no** assertion about it
   (the capability-absence rule, §21.22): its silence is never read as "empty" or "deleted."
+- **Open-namespace determinism (normative).** The namespace set is open and unbounded (§2.1) — this
+  document keeps no closed registry of `ns` values a replica must have "seen" to merge correctly.
+  §2.2's determinism contract holds **regardless of which namespaces a replica has ever subscribed to or
+  observed**: any two replicas that have applied the same set of ops within the same namespaces compute
+  the same bytes, exactly as §2.2 states, whether or not either replica knows a third namespace exists.
+  A namespace a replica has never subscribed to is a **partial-sync gap** governed by the scoping rules
+  above — never a determinism violation, and never grounds for an implementation to treat the namespace
+  set as fixed or enumerable.
 
 ---
 
@@ -1410,6 +1463,12 @@ implementation** of this document now exists and executes these vectors; it is w
 corrections C-01…C-07, and the vectors below are the ones it must reproduce byte-for-byte. Generation
 stays in the script, so the vectors remain an independent check on any implementation rather than a
 restatement of one.
+
+**Conformance floor (§4.0).** The suite below is **tiered**, not shrunk: the MANDATORY tier — every
+implementation of this document — is the core CRDTs (OR-Set, LWW, Death-certificate) plus reconciliation
+and snapshots, i.e. every vector except `SYNC-PN-*`, `SYNC-RGA-*`, and `SYNC-TREE-01`; those three
+extension-primitive groups are an OPTIONAL tier, required only of an implementation that ships the
+corresponding §4.6/§4.7/§4.8 primitive. All 24 vectors remain frozen and byte-exact regardless of tier.
 
 Five of these were previously **NOT-FROZEN** stubs: `SYNC-OP-02` (the `COSE_Sign1` envelope framing),
 `SYNC-TREE-01` (an outright contradiction between the stub's expectation and §4.8's replay algorithm),
