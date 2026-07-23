@@ -164,6 +164,20 @@ Only the recipient (or group members) can decrypt `Payload`, so **all sender ide
 subject, recipients, threading, and content are hidden from the network** — this is what
 sealed sender + payload encryption buys.
 
+**HPKE mode: Base, not Auth (pinned here; the binding requirement is §18.2).** The
+pre-session/first-contact seal of `Payload` into `Envelope.ciphertext` (§5.2) — an HPKE seal
+directly to the recipient's identity/KeyPackage key — is fixed to HPKE **Base mode** (RFC 9180
+§5.1.1, `mode = 0x00` per Table 1), never HPKE Auth mode (`mode = 0x02`) or either PSK variant
+(`0x01`/`0x03`). Sender authentication for a sealed MOTE is `Payload.sig` over `Payload.from`
+(above), carried and verified **inside** the HPKE-decrypted plaintext by the recipient alone —
+not HPKE's own KEM-level sender-key binding. Auth mode would fold the sender's static key into
+the KEM encapsulation itself, adding a second, unaudited authentication path that duplicates
+`Payload.sig` and that the recipient's HPKE context would need to resolve *before* the seal is
+even opened — which cuts against sealed sender (§6.2): the whole point of carrying the
+signature inside the payload, rather than at the KEM layer, is that nothing outside the
+recipient — including the HPKE mechanism itself — learns who sent the message. §18.2 states
+the binding requirement for the wire encoding.
+
 **`fs_ratchet` is removed (was: `?bytes`, "forward-secrecy ratchet material," §5.2).** The field
 was OPTIONAL and opaque, and never given a preimage, derivation, or verifier anywhere in the
 specification; retrofitting real semantics onto it would either duplicate the MLS epoch mechanism

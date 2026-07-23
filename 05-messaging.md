@@ -194,8 +194,10 @@ distinct, lighter ordering path for **n = 2** and reserves the committer/quorum 
   once a session's first epoch exists (§5.3 Add/Welcome, or an External Commit). A MOTE sent
   before that — the 1:1/first-contact path — is **HPKE-sealed directly to the recipient's
   identity/KeyPackage key**, with `Envelope.epoch` absent (§2.2): a single HPKE seal, not a
-  ratchet. There is no epoch to have advanced past and no key-deletion schedule protecting it, so
-  compromise of that recipient key at **any later time** exposes the message — this is not a
+  ratchet, always in **HPKE Base mode** (RFC 9180 §5.1.1; never Auth mode) — pinned normatively
+  at §2.4, with the matching wire encoding at §18.2. There is no epoch to have advanced past and
+  no key-deletion schedule protecting it, so compromise of that recipient key at **any later
+  time** exposes the message — this is not a
   degraded or partial form of forward secrecy, it is the property **not yet applying**. The
   optional deniable 1:1 mode (§5.2.1(a)) is currently the **only** pre-session option that
   supplies forward secrecy from its first message, because its Double Ratchet does not wait on an

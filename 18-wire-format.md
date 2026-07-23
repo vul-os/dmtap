@@ -309,6 +309,18 @@ the object's `suite`.
 | HPKE encapsulated key (inside `ciphertext`) | 32 B (X25519) | 32 B ‖ 1088 B (X-Wing) |
 | `hash` digest | 32 B (BLAKE3-256) | 32 B |
 
+**HPKE mode (normative): Base only.** The HPKE encapsulated key in the row above — sealing a
+1:1/first-contact `Payload` directly to the recipient's identity/KeyPackage key (§2.4, §5.2) —
+is always produced under HPKE **Base mode** (RFC 9180 §5.1.1, `mode = 0x00` per Table 1).
+Implementations MUST NOT use HPKE Auth mode (`mode = 0x02`) or either PSK variant
+(`0x01`/`0x03`) for this seal: sender authentication is `Payload.sig` (§2.4, §18.3.5), carried
+and verified inside the HPKE-decrypted plaintext, not the KEM's own sender-key binding — Auth
+mode would add a second, unaudited authentication path and would require the recipient's HPKE
+setup to resolve the sender's identity before the seal is opened, contradicting sealed sender
+(§6.2). The mode is not wire-negotiated — there is no `mode` field to set — it is fixed by this
+specification, so a conformant sender never constructs, and a conformant recipient never
+attempts to open, anything but a Base-mode context here.
+
 **Suite `0x03`** (Ed25519+ML-DSA-65 / X-Wing / AES-256-GCM / BLAKE3-256, §16.7/§21.15) has the
 **identical byte layout to `0x02`** in every row above — including the 32 B `enc-key` — differing
 only in the AEAD selector (AES-256-GCM), so no separate column is needed.
