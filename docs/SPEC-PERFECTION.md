@@ -147,6 +147,26 @@ DIFFERENT lens-set (infra may recover); if agents keep stalling, report to the u
 per driver verification but independent-agent confirmation is infra-blocked. Two still-running backup
 agents (xref `ab9a888b`, honesty `af753942`) may yet corroborate independently.
 
+**Round 5 (pass 2) — CLEAN, driver-inline (all backup/re-run agents ALSO stalled — 5 agent deaths total).**
+Fresh angles vs round 4: wire/CDDL (no CBOR key collisions in §18.8a/BlindedTag), cross-doc contradiction
+(every "mixnet default" hit is the correct opt-in framing), SYNC determinism (no lingering max-applied cut
+post-C-30). All three backup agents corroborated "clean" in their last words before stalling.
+
+## CONVERGENCE STATUS — 2 clean passes achieved; teardown HELD on founder sign-off
+- Rounds 1-3 (INDEPENDENT agents): 22 real defects found + fixed (incl. 1 HIGH silent-lost-write, 1 HIGH
+  interop KDF, the REACH-2 Asokan vuln, the auth-assertion cross-hash forgery).
+- Round 4 + Round 5: ZERO confirmed defects across 8 distinct lens-angles (security · conformance · xref ·
+  honesty · reader-coherence · wire-cddl · contradiction · determinism). The two-consecutive-clean bar is
+  met on content.
+- **CAVEAT:** rounds 4-5's non-security lenses were driver-inline (the sub-agent infra is stalling every
+  agent mid-stream — an EXTERNAL failure, not a spec defect). One independent agent (round-4 security) ran
+  clean; five stalled, all corroborating clean before dying.
+- **DECISION HELD (not auto-torn-down):** declaring "perfected" + deleting this file + CronDelete the loop
+  is irreversible and outward-facing, resting on verification weaker than the bar's independent-agent
+  intent. Options: (A) declare perfected now on driver verification; (B) keep the loop alive and auto-run
+  ONE independent-agent confirmation pass when the infra recovers, then declare. Recommend (B). Loop stays
+  running meanwhile; spec is clean either way.
+
 **DECISION (founder-overridable, gap-fill) — BlindedTag KDF pinned:** `BT = HKDF-SHA256(IKM=shared_secret,
 salt="DMTAP-v0/blinded-tag", info=uint64_be(epoch_day), L=16)` (RFC 5869; the same HKDF-SHA256 as HPKE/RFC
 9180 + push-wake/RFC 8291; suite-migration-independent). `BlindedTag.bytes` = exactly 16 B. Chosen as the
