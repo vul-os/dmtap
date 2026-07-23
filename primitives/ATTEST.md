@@ -109,12 +109,22 @@ Revoke = {
 }
 ```
 
-- **`issuer` / `signer`.** `issuer` is the root `IK` and **MUST** equal the carrier's
-  authenticated identity — `PubAnnounce.pub` (public) or `Payload.from` (private). The carrier's
-  `sig` MAY be produced by a `DeviceCert` operational subkey (§1); a verifier MUST confirm
+- **`issuer` / `signer`.** `issuer` **MUST** equal the carrier's authenticated identity —
+  `PubAnnounce.pub` (public) or `Payload.from` (private) — and is **normally a root `IK`**. The
+  carrier's `sig` MAY be produced by a `DeviceCert` operational subkey (§1); a verifier MUST confirm
   `signer == issuer` **or** a valid non-revoked `DeviceCert` chain from `signer` to `issuer` before
   accepting (identical to the §22.3.3 `PubAnnounce` rule; the equivalent MOTE rule for the private
   carrier is `Payload.from`'s device-key authorization, §1).
+- **Pseudonymous-issuer mode (normative — for deliberately unlinkable claim classes).** Where a claim
+  class requires the issuer to be **unlinkable** to a root identity — the web-of-trust edges of
+  [`REPUTATION.md`](REPUTATION.md) REP-2 are the load-bearing case — `issuer` MAY instead be a
+  **per-context pseudonymous key that is NOT `DeviceCert`-chained to any root `IK`**. The carrier rule
+  is unchanged: `issuer` still MUST equal `PubAnnounce.pub`/`Payload.from`; what differs is only that
+  the authenticated identity *is* the pseudonym. **Honest consequence, stated rather than hidden:**
+  such a claim is attributable **only to that pseudonym** and proves nothing about any rooted or
+  real-world identity, so it MUST NOT be used where issuer identity is the point (credentials,
+  licensing, oracle facts), and a verifier MUST NOT present it as though it were rooted. The same
+  unlinkability that is the *purpose* in reputation (REPUTATION §9) is a *disqualification* elsewhere.
 - **`subject`.** Operator-independent by construction — an `IK` or a content address, never a
   registry handle or a coordinator-local row id. This is what makes an attestation **portable**:
   it names the same subject after any coordinator is swapped ([CONTRACT §2.2](../coordinator/CONTRACT.md)).

@@ -133,8 +133,14 @@ irrevocability to the author before the object is published** (§8, SEC-9 residu
   a storefront, an account handle, or any operator-scoped id. Portability is a consequence of this
   rule, not of any bespoke mechanism (TRACT §10.2b).
 - **REP-2 — Author is a per-context pseudonymous subkey, never the root `IK`.** A truster/reviewer
-  MUST sign with a per-subject-or-per-context subkey (§1.5), so two subjects cannot join an author's
-  history across them by key, and only the author (holding the root key or the stored mapping) can.
+  MUST sign with a per-subject-or-per-context subkey — a key minted per subject or per context and
+  **not** `DeviceCert`-chained to the author's root `IK`, so no third party can link it to that root.
+  Carried as an ATTEST claim this is ATTEST's **pseudonymous-issuer mode**
+  ([`ATTEST.md` §2](ATTEST.md)), which exists for exactly this requirement; the worked construction is
+  [`profiles/tract/01-actors.md` §1.5](../profiles/tract/01-actors.md), cited as an instance — this
+  primitive states the requirement and does **not** depend on that profile. Two subjects therefore
+  cannot join an author's history across them by key, and only the author (holding the root key or the
+  stored mapping) can.
   A profile MUST NOT require the root `IK` to sign reputation input.
 - **REP-3 — No published score (the prohibition).** No object this primitive or any profile defines
   MAY carry an aggregated reputation number (§2.3). A conformant encoder MUST reject any attempt to
