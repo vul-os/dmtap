@@ -58,13 +58,23 @@ default/normative or dangle refs to the moved section — reconcile to opt-in/re
   soften "the mixnet's anonymity guarantee" to the opt-in/research framing.
 - Sweep for any other doc still saying mixnet "default"/"normative"/"guarantee" (grep) and reconcile.
 
-**W2 (substantive residuals — after W1 commits, watch overlaps):** RecoveryPolicy §1.4 formal model
-(01/13); HPKE-mode pinned Base (02/05/18); SYNC split minimal-core+extension + open-namespace determinism
-(substrate/SYNC); premature-generality cuts (suites 0x03-0x05→appendix; compute-kind note; media-relay/
-reachability collapse consideration); multi-homing RECOMMENDED (substrate/ROLES); REPUTATION→OpenRank
-"degraded" label (primitives/REPUTATION + bindings); personhood ≥2 (bindings + profiles); discovery/
-indexer + coordinator-funding named as first-class open problems (DIRECTION/SPEC); GOVERNANCE.md refresh +
-coordinator-contract ratification process; §19.7.1 Payload.from=gateway-IK fix (19).
+**W2 (substantive residuals — after W1 commits, watch overlaps):**
+- [x] RecoveryPolicy §1.4 formal model (01/13) — Table A/D + `is_weakening()`; D0 eviction case `1aad934`.
+- [x] HPKE-mode pinned Base (02/05/18) — `712c091`.
+- [~] SYNC split minimal-core+extension + open-namespace determinism (substrate/SYNC) — **agent S in flight**.
+- [ ] premature-generality cuts (suites 0x03-0x05→appendix (16/18); compute-kind note; media-relay/
+  reachability collapse consideration (CONTRACT — hold till U frees it)) — NEXT.
+- [x] multi-homing RECOMMENDED (substrate/ROLES) — `7c89506`.
+- [x] REPUTATION→OpenRank "degraded" label + personhood ≥2 + discovery/indexer + coordinator-funding
+  open problems (primitives/REPUTATION, bindings, profiles, DIRECTION/SPEC) — `5d05427`.
+- [x] GOVERNANCE.md refresh + coordinator-contract ratification process (+ fail-open→fail-closed `e3328d0`).
+- [x] §19.7.1 Payload.from=gateway-IK fix — already correct (step 3 sets gateway IK; CHANGELOG:139).
+
+**Critique round 1 (workflow `wyr7famw7`) — 8 residuals, closing:**
+- [x] §1.4a D0 eviction `1aad934` · [x] HPKE Base `712c091` · [x] trivial batch `e3328d0`
+- [x] §18.8a wire-object cluster (suite/valid_until/terminating→declared/mime/mail-fast) `2b86e22`
+- [x] 06/04 privacy (bulk onion-MUST vs §4.5 MUST-NOT contradiction; dangling §4.4.11) `675aad9`
+- [~] cross-doc reconcile CONTRACT/07/26/21/10 to T's layout — **agent U in flight**.
 
 **W3 (simplify):** compress per-doc SEC-invariant/honest-residual boilerplate to reference tables
 (THREAT-MODEL = single argued source, ~15-20% cut, zero normative loss); turn reproduced index tables into
