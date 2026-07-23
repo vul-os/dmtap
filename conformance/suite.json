@@ -19,7 +19,7 @@
     "vectored": "byte-backed by a named entry in vectors/vectors.json",
     "self-contained": "input bytes given inline (input.cbor_hex); reference-independent",
     "construction-todo": "byte-exact construction recipe given; vector still to be generated as the subsystem gains a fixed-input KAT",
-    "manual-attestation": "a client-UX, in-product-disclosure or deployment/process MUST with no wire bytes to recompute (\u00a722.7's explicit-publish-act and irrevocability disclosures; \u00a74.4.10a's Bootstrap degradation disclosure and no-anonymity-claim rule; \u00a77.11.4/\u00a79.11's gateway posture; \u00a77.1b's process/privilege separation); verified by implementer/deployment review, not by a byte-level runner"
+    "manual-attestation": "a client-UX, in-product-disclosure or deployment/process MUST with no wire bytes to recompute (\u00a722.7's explicit-publish-act and irrevocability disclosures; docs/research/mixnet.md \u00a74.4.10a's Bootstrap degradation disclosure and no-anonymity-claim rule, for an implementation offering the opt-in mixnet; \u00a77.11.4/\u00a79.11's gateway posture; \u00a77.1b's process/privilege separation); verified by implementer/deployment review, not by a byte-level runner"
   },
   "vectors_file": "vectors/vectors.json",
   "vectors_count": 69,
@@ -28,7 +28,8 @@
   "notes": [
     "reject cases map to spec \u00a721 (144-code registry); error_code + error_name + disposition (Action column) are normative.",
     "self-contained CBOR reject cases assert a deterministic-CBOR (RFC 8949 \u00a74.2 / \u00a718.1.1) decoder rejects the given bytes.",
-    "construction-todo cases are non-deterministic to seal (sealed Envelope/Payload) or belong to subsystems not yet vectored (README 'Coverage vs. deferred')."
+    "construction-todo cases are non-deterministic to seal (sealed Envelope/Payload) or belong to subsystems not yet vectored (README 'Coverage vs. deferred').",
+    "2026-07 mixnet-demotion sweep: every \u00a74.4/\u00a74.4.x clause citation in this file (MIXPROF/FLEET/GUARD/COVER/TIER categories, and any inline \u00a74.4.x reference elsewhere) refers to the relocated, non-normative docs/research/mixnet.md (internal section numbers preserved unchanged); every \u00a79.4.1 citation (FLOOR-03/04) refers to the relocated docs/research/vdf.md. Both moved out of the normative spec as opt-in, research-tier, not-conformance-mandatory (docs/research/README.md \u00a75). These cases stay at level \"Private\", which spec \u00a710.3 marks OPTIONAL: they bind only an implementation that chooses to offer the opt-in mixnet/VDF, never a baseline conformant node. Vectors and case content are unchanged by this note; it corrects only where the cited clause now lives."
   ],
   "cases": [
     {
@@ -5213,15 +5214,15 @@
       "category": "COVER",
       "req": "MUST",
       "clause": [
-        "\u00a74.4.2a",
-        "\u00a74.4.2"
+        "\u00a74.6",
+        "docs/research/mixnet.md \u00a74.4.2a (historical text, superseded by the 2026-07 demotion \u2014 see the stub at 04-transport.md \u00a74.4)"
       ],
-      "checks": "The mix role is default-on for always-on public nodes, and default-off for everything else. A mixnet with no mixes protects nobody and DMTAP has no launching operator whose fleet it could borrow, so a node that is always-on and has a public address MUST default to serving the mix role and MUST publish a MixNodeDescriptor. The operator MAY turn it off \u2014 the requirement is on the default. Symmetrically, intermittent, battery- or metered-connection devices and nodes without a public address MUST NOT default to it: a mix that disappears mid-epoch degrades everyone's paths",
+      "checks": "The mix role is OPT-IN and NEVER default-on, for every device class (2026-07 mixnet-demotion sweep: this supersedes the earlier default-on rule docs/research/mixnet.md \u00a74.4.2a preserves verbatim as historical text). DMTAP's opt-in, research-tier mixnet (docs/research/mixnet.md) does not default any node into serving the mix role, regardless of device class or address reachability: the standing default transport tier is fast (\u00a74.6), and the mix role exists only for a network that has chosen to offer the opt-in private tier. An implementation MAY let an operator explicitly opt an always-on, publicly-addressed node into the mix role; it MUST NOT default the role on for any device class.",
       "operation": "mix_role_default",
       "construction": "first-run configuration on (a) a mains-powered node with a public address, (b) a phone on a metered connection, (c) a node behind NAT with no public address \u2014 inspect the default mix-role setting and whether a MixNodeDescriptor is published",
       "expect": {
         "outcome": "accept",
-        "note": "(a) must default on and publish a descriptor; (b) and (c) must default off and publish none"
+        "note": "all three (a)/(b)/(c) must default the mix role OFF and publish no MixNodeDescriptor absent explicit operator opt-in; a build that ships the mix role default-on for any device class is non-conformant"
       },
       "status": "construction-todo"
     },
@@ -5235,12 +5236,12 @@
         "\u00a76.5",
         "\u00a72.5"
       ],
-      "checks": "Large-tier bulk does not traverse the mixnet, and is not described as if it did. Blobs above the large-tier boundary MUST NOT traverse the mixnet \u2014 the bandwidth and latency are impractical \u2014 while normal-tier chunks do ride it like messages. The control MOTE carrying the manifest and key travels private; the bytes do not. The honest consequence is that a well-positioned observer learns the fact and approximate size of a large transfer, and an implementation MUST NOT claim mixnet-grade metadata privacy for it",
+      "checks": "File bulk NEVER traverses the opt-in mixnet, and is not described as if it did, regardless of which tier the sender otherwise uses. Blobs above the large-tier boundary MUST NOT traverse the mixnet \u2014 the bandwidth and latency are impractical. The control MOTE carrying the manifest and key travels the same tier as any other control MOTE for that sender (fast by default, \u00a74.6, or the opt-in private tier if the sender has selected it) \u2014 the bulk bytes never do either way. Where the control MOTE does ride the opt-in private tier, the honest consequence is that a well-positioned observer still learns the fact and approximate size of the large transfer from the bulk fetch, and an implementation MUST NOT claim mixnet-grade metadata privacy for it",
       "operation": "file_transfer_tier",
-      "construction": "offer a large-tier file; trace the control MOTE and the chunk fetches separately and inspect what the client tells the user about the transfer's privacy",
+      "construction": "offer a large-tier file from a sender using the opt-in private tier for its control MOTEs; trace the control MOTE and the chunk fetches separately and inspect what the client tells the user about the transfer's privacy",
       "expect": {
         "outcome": "accept",
-        "note": "control MOTE on private, chunk fetch on the fast/bulk path; routing chunks over the mixnet, or claiming mixnet-grade privacy for them, is non-conformant"
+        "note": "control MOTE on whichever tier the sender uses (private in this construction), chunk fetch always on the fast/bulk path; routing chunks over the mixnet, or claiming mixnet-grade privacy for them, is non-conformant"
       },
       "status": "construction-todo"
     },

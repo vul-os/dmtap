@@ -24,7 +24,17 @@ Each case has:
 | **checks** | What behaviour is asserted. |
 | **input** | A **vector id** in `vectors.json` (or, for the `PUB`/`CAD` categories, `vectors/pub_vectors.json` — see those sections), an inline **self-contained construction** (bytes given here), or a **construction** described from other vectors. |
 | **expect** | The required outcome: `match` (recompute a KAT and get the committed answer), `accept` (validation passes), or `reject` + the **§21 error code** the reject maps to. |
-| **status** | `vectored` (byte-backed by `vectors.json` or `pub_vectors.json`), `self-contained` (bytes given inline, reference-independent), `construction-todo` (recipe given; byte-exact vector still to be generated), or `manual-attestation` (a client-UX, in-product-disclosure or deployment/process MUST with **no wire bytes to recompute** — §22.7's publish-consent disclosures, §4.4.10a's Bootstrap degradation disclosure and no-anonymity-claim rule, §7.11.4/§9.11's gateway posture, §7.1b's process/privilege separation; verified by implementer/deployment review, not by a runner. A vector is **not** invented for these: fabricating bytes would assert a fact the protocol does not carry). |
+| **status** | `vectored` (byte-backed by `vectors.json` or `pub_vectors.json`), `self-contained` (bytes given inline, reference-independent), `construction-todo` (recipe given; byte-exact vector still to be generated), or `manual-attestation` (a client-UX, in-product-disclosure or deployment/process MUST with **no wire bytes to recompute** — §22.7's publish-consent disclosures, [docs/research/mixnet.md §4.4.10a](../docs/research/mixnet.md)'s Bootstrap degradation disclosure and no-anonymity-claim rule for an implementation offering the opt-in mixnet, §7.11.4/§9.11's gateway posture, §7.1b's process/privilege separation; verified by implementer/deployment review, not by a runner. A vector is **not** invented for these: fabricating bytes would assert a fact the protocol does not carry). |
+
+**Clause citations into the relocated mixnet/VDF sections (2026-07 demotion).** Every `§4.4`/
+`§4.4.x` clause cited by a `MIXPROF`/`FLEET`/`GUARD`/`COVER`/`TIER` case (and any other inline
+`§4.4.x` mention below) refers to [`docs/research/mixnet.md`](../docs/research/mixnet.md), not
+`04-transport.md` — the Sphinx mixnet was relocated there as non-normative/experimental, with its
+internal section numbers preserved unchanged. Every `§9.4.1` citation (`FLOOR-03`/`FLOOR-04`)
+likewise refers to [`docs/research/vdf.md`](../docs/research/vdf.md). All such cases stay at the
+**Private** level, which is OPTIONAL (§10.3): they bind only an implementation that chooses to
+offer the opt-in mixnet/VDF, never a baseline conformant node. This note does not change any case
+id, vector, or expected outcome — only where the cited clause now lives.
 
 **Outcome vocabulary.** `match` = the operation is a deterministic known-answer test; recompute
 it over the fixed input and the result MUST equal the committed `expected`. `accept` / `reject` =
@@ -171,8 +181,11 @@ to be re-vectored when the reference regenerates `vectors.json`.
 
 Core is the interoperability floor (§10.3): Identity (§1), MOTE (§2), naming + TOFU + fail-closed
 KT (§3), delivery + `deliver`/`ack` (§4), MLS 1:1 (§5), recipient policy incl. cold-sender
-challenge gating (§9). A production mail node MUST also implement **Private** (§10.3). Every Core
-crypto/encoding case below is a prerequisite the higher levels inherit.
+challenge gating (§9). Because the default transport tier is `fast`, not `private` (§4.6), Core
+alone is sufficient for a production mail node to operate at the protocol's own default; **Private**
+is an OPTIONAL, research-tier level (§10.3) an implementation additionally targets only if it
+chooses to offer the opt-in mixnet ([docs/research/mixnet.md](../docs/research/mixnet.md)). Every
+Core crypto/encoding case below is a prerequisite the higher levels inherit.
 
 ### CBOR — deterministic canonical encoding (§18.1.1, §18.1.2)
 
@@ -313,13 +326,16 @@ sealed `Envelope`/`Payload` fixture, which is non-deterministic to *seal* — se
 
 ---
 
-## Private level (§4.4, §6)
+## Private level (OPTIONAL, research-tier — [docs/research/mixnet.md](../docs/research/mixnet.md), §4.6)
 
-Core + mixnet (Sphinx + directory + 3-hop stratified paths + key-epoch rotation) + sealed sender +
-cover traffic + anti-active-adversary mechanisms + fail-closed no-downgrade + privacy tiers. A
-**production** mail node MUST implement Private (§10.3): `private` is the standing default tier
-(§4.6). No byte-exact vectors exist yet (Sphinx uses fresh randomness; see README "deferred");
-each case gives the normative check and error.
+Core + the opt-in mixnet (Sphinx + directory + 3-hop stratified paths + key-epoch rotation) +
+sealed sender + cover traffic + anti-active-adversary mechanisms + fail-closed no-downgrade +
+privacy tiers. This level is **OPTIONAL and non-normative** (§10.3): the standing default tier is
+`fast`, not `private` (§4.6), so no conformant mail node — production or otherwise — is required
+to implement Private. An implementation additionally targets this level only if it chooses to
+offer the opt-in `private` tier, in which case the cases below are the byte-exact interoperability
+target for that choice. No byte-exact vectors exist yet (Sphinx uses fresh randomness; see README
+"deferred"); each case gives the normative check and error.
 
 | id | req | clause | checks | expect | status |
 |----|-----|--------|--------|--------|--------|
@@ -1020,7 +1036,7 @@ precisely the adversary's goal.
 | DMTAP-COVER-03 | MUST | §4.4.7, §16.3 | **The detection rule is a measurement, not an intuition.** A node MUST track, over a sliding window, the fraction of its loops that return within their expected delay budget and their latency distribution; if the return fraction drops below the loop-loss threshold (§16.3), or latencies inflate beyond what the exponential budget explains, it MUST infer an active drop/delay attack on its paths and raise `ERR_MIX_ACTIVE_ATTACK_SUSPECTED` | construction: hold the fleet and paths fixed and drop a controlled fraction of the node's traffic at one mix, sweeping the fraction across the §16.3 threshold; separately, add latency beyond the exponential budget with no loss at all | reject → `ERR_MIX_ACTIVE_ATTACK_SUSPECTED` (0x030F), HALT_ALERT once either signal crosses its bound; a node that only counts total delivery failures, and never measures its own loops, cannot pass this case | construction-todo |
 | DMTAP-COVER-04 | MUST | §4.4.7, §4.4.9 | **Rotate, alert, fail closed — never silently continue.** On an inferred active attack the node MUST (1) rotate away from the implicated mixes and entry guards and rebuild over alternate, operator-diverse paths, (2) raise a `HALT_ALERT` to the user, and (3) **fail closed for the `private` tier**: it MUST NOT silently fall back to `fast`, or to a shorter or less diverse path, to get the message through. That fallback is exactly the adversary's goal — an attacker who can degrade a path gets to choose the tier the message travels on | construction: drive `DMTAP-COVER-03`'s detection to fire while a `private`-tier MOTE is queued; record the tier, hop count and guard set of every subsequent dispatch attempt, and the user-visible state | accept (paths rebuilt away from the implicated mixes and guards, a `HALT_ALERT` surfaced, and the MOTE still `private` — held rather than downgraded); any dispatch at `fast`, or on a path below the in-force profile's bar, is non-conformant → `ERR_PRIVATE_TIER_DOWNGRADE_REFUSED` (0x0310) is the correct refusal | construction-todo |
 | DMTAP-COVER-05 | MUST | §4.4.3, §4.4.6 | **A fresh, independent path per Sphinx cell.** A sender MUST select an independent path for **each** cell — including every cell of a multi-cell MOTE and every cover packet — so no persistent circuit exists to correlate. This is also what makes `private` retry work at all: §4.7 requires a re-onion-wrap before re-dispatch, because identical Sphinx bytes are dropped at the first honest hop as a per-hop-tag replay | construction: send a multi-cell `private` MOTE and a burst of cover packets; extract the hop sequence of each cell. Companion: force a `RETRY → IN_FLIGHT` transition and compare the re-dispatched bytes with the original | accept (no two cells share a path, and the retry carries fresh `α`/per-hop tags under a stable envelope `id`); re-dispatching identical `private` bytes rejects at the first hop → `ERR_MIX_REPLAY_DETECTED` (0x030E), so an implementation that skips the re-wrap can never deliver a retried `private` MOTE | construction-todo |
-| DMTAP-COVER-06 | MUST | §4.4.2a, §4.4.2 | **The mix role is default-on for always-on public nodes, and default-off for everything else.** A mixnet with no mixes protects nobody and DMTAP has no launching operator whose fleet it could borrow, so a node that is always-on and has a public address MUST default to serving the mix role and MUST publish a `MixNodeDescriptor`. The operator MAY turn it off — the requirement is on the **default**. Symmetrically, intermittent, battery- or metered-connection devices and nodes without a public address MUST NOT default to it: a mix that disappears mid-epoch degrades everyone's paths | construction: first-run configuration on (a) a mains-powered node with a public address, (b) a phone on a metered connection, (c) a node behind a NAT with no public address — inspect the default mix-role setting and whether a `MixNodeDescriptor` is published | accept ((a) defaults on and publishes a descriptor; (b) and (c) default off and publish none); a build that ships (a) opt-in, or (b)/(c) opt-out, is non-conformant | construction-todo |
+| DMTAP-COVER-06 | MUST | §4.6, [docs/research/mixnet.md §4.4.2a](../docs/research/mixnet.md) (historical text, superseded — see the stub at `04-transport.md` §4.4) | **The mix role is OPT-IN and NEVER default-on, for every device class (2026-07 mixnet-demotion sweep — supersedes the earlier default-on rule the linked historical text preserves verbatim).** DMTAP's opt-in, research-tier mixnet does not default any node into serving the mix role, regardless of device class or address reachability: the standing default transport tier is `fast` (§4.6), and the mix role exists only for a network that has chosen to offer the opt-in `private` tier. An implementation MAY let an operator explicitly opt an always-on, publicly-addressed node into the role; it MUST NOT default the role on for any device class | construction: first-run configuration on (a) a mains-powered node with a public address, (b) a phone on a metered connection, (c) a node behind a NAT with no public address — inspect the default mix-role setting and whether a `MixNodeDescriptor` is published | accept (all three (a)/(b)/(c) default the mix role **off** and publish no `MixNodeDescriptor` absent explicit operator opt-in); a build that ships the mix role default-on for any device class is non-conformant | construction-todo |
 
 ---
 
@@ -1033,7 +1049,7 @@ platform that did not require one.
 
 | id | req | clause | checks | input | expect | status |
 |----|-----|--------|--------|-------|--------|--------|
-| DMTAP-TIER-01 | MUST | §4.5, §6.5, §2.5 | **Large-tier bulk does not traverse the mixnet, and is not described as if it did.** Blobs above the large-tier boundary MUST NOT traverse the mixnet — the bandwidth and latency are impractical — while normal-tier chunks do ride it like messages. The control MOTE carrying the manifest and key travels `private`; the bytes do not. The honest consequence is that a well-positioned observer learns the fact and approximate size of a large transfer, and an implementation MUST NOT claim mixnet-grade metadata privacy for it | construction: offer a large-tier file; trace the control MOTE and the chunk fetches separately, and inspect what the client tells the user about the transfer's privacy | accept (control MOTE on `private`, chunk fetch on the fast/bulk path); routing the chunks over the mixnet is non-conformant, and so is presenting the chunk fetch as carrying the `private` tier's metadata protection | construction-todo |
+| DMTAP-TIER-01 | MUST | §4.5, §6.5, §2.5 | **File bulk NEVER traverses the opt-in mixnet, and is not described as if it did, regardless of which tier the sender otherwise uses.** Blobs above the large-tier boundary MUST NOT traverse the mixnet — the bandwidth and latency are impractical. The control MOTE carrying the manifest and key travels the same tier as any other control MOTE for that sender (`fast` by default, §4.6, or the opt-in `private` tier if selected) — the bulk bytes never do either way. Where the control MOTE does ride the opt-in `private` tier, a well-positioned observer still learns the fact and approximate size of the large transfer from the bulk fetch, and an implementation MUST NOT claim mixnet-grade metadata privacy for it | construction: offer a large-tier file from a sender using the opt-in `private` tier for its control MOTEs; trace the control MOTE and the chunk fetches separately, and inspect what the client tells the user about the transfer's privacy | accept (control MOTE on whichever tier the sender uses — `private` in this construction — chunk fetch always on the fast/bulk path); routing the chunks over the mixnet is non-conformant, and so is presenting the chunk fetch as carrying the `private` tier's metadata protection | construction-todo |
 | DMTAP-TIER-02 | MUST | §4.9.3, §6.6 | **Prefer the open push provider wherever the platform allows.** A conforming node MUST prefer an open provider — UnifiedPush or Web Push — wherever the platform allows, and MUST fall back to APNs or FCM **only** on a platform that mandates them. The wake payload is the same RFC 8291-sealed content-free token either way, so the provider choice changes only who is in the path, which is exactly why the preference is normative rather than advisory | construction: enable push on (a) a desktop/browser platform where Web Push is available, (b) a de-Googled Android with UnifiedPush available, (c) iOS; inspect the provider tag in the resulting `PushSubscription` | accept ((a) Web Push, (b) UnifiedPush, (c) APNs); selecting FCM on (b), or any closed bridge on (a), is non-conformant even though the sealed token is identical | construction-todo |
 
 ---

@@ -55,22 +55,26 @@ An implementation is **DMTAP-conformant** at a level if it passes the correspond
 | Level | Requires |
 |-------|----------|
 | **Core** | Identity (§1), MOTE (§2), naming resolution + TOFU + **v0-minimal KT publish/verify with fail-closed-on-unreachable** (§3), mesh delivery + `deliver`/`ack` (§4), MLS 1:1 (§5), recipient policy incl. cold-sender challenge gating (§9) |
-| **Private** | Core + mixnet (Sphinx packet + derived fleet view + 3-hop stratified paths + key-epoch rotation, §4.4.1–§4.4.4) + sealed sender + cover traffic + the **anti-active-adversary mechanisms** (per-epoch replay caches, Poisson mixing, loop-cover attack detection, entry guards + operator diversity, and **fail-closed no-downgrade**, §4.4.6–§4.4.9) + privacy tiers (§4, §6) + the **Bootstrap-profile rules** (§4.4.10a: user-visible degradation, no anonymity claim, auto-upgrade-never-fall-back, per-contact ratchet) — a network small enough to need Bootstrap is the normal early case, so its constraints are part of the level, not an extra. The user-selectable **high-security profile** (§4.4.10) and **PQ-Sphinx** (§4.4.12) are OPTIONAL. |
+| **Private** (OPTIONAL, research-tier — not required of any conformant node, §4.6) | Core + the opt-in mixnet (Sphinx packet + derived fleet view + 3-hop stratified paths + key-epoch rotation, [docs/research/mixnet.md §4.4.1–§4.4.4](docs/research/mixnet.md)) + sealed sender + cover traffic + the **anti-active-adversary mechanisms** (per-epoch replay caches, Poisson mixing, loop-cover attack detection, entry guards + operator diversity, and **fail-closed no-downgrade**, [docs/research/mixnet.md §4.4.6–§4.4.9](docs/research/mixnet.md)) + privacy tiers (§4, §6) + the **Bootstrap-profile rules** ([docs/research/mixnet.md §4.4.10a](docs/research/mixnet.md): user-visible degradation, no anonymity claim, auto-upgrade-never-fall-back, per-contact ratchet) — a network small enough to need Bootstrap is the normal early case for an implementation that offers this level, so its constraints are part of the level, not an extra. The user-selectable **high-security profile** ([docs/research/mixnet.md §4.4.10](docs/research/mixnet.md)) and **PQ-Sphinx** ([docs/research/mixnet.md §4.4.12](docs/research/mixnet.md)) are OPTIONAL within this already-optional level. This level is **non-normative and not conformance-required**: it exists so an implementation that *chooses* to offer the opt-in `private` tier ([docs/research/mixnet.md](docs/research/mixnet.md)) has a byte-exact interoperability target, not because any conformant node must reach it. |
 | **Groups & Files** | Core + MLS groups + content-addressed file transfer (§5) |
 | **Legacy** | Core + gateway inbound/outbound + DKIM delegation (§7); gateway legacy-client surfaces (IMAP/POP/SMTP-submission + CalDAV/CardDAV) + the reachability ingress + operator modes RECOMMENDED (§7.15) |
 | **Clients** | Core + **JMAP** — the node's native client surface (§8.1). Legacy client protocols (IMAP/POP/SMTP-submission, CalDAV/CardDAV) are a **gateway** capability (RECOMMENDED, §7.15), **not** a node one; a conformant node runs no legacy protocol server (§8) |
 | **Auth** | Core + DMTAP-Auth login ceremony with origin binding + key-bound sessions (§13); OIDC bridge RECOMMENDED (§13.6) |
 
-**Core is an interoperability floor, not a production target.** Because the standing default
-privacy tier for mail (and for every control MOTE) is `private` (§4.6), a Core-only node cannot
-operate at the protocol's own default without also implementing **Private**. Therefore a
-**production** node that carries user mail **MUST** implement **Private** as well as Core;
-`fast`-tier-only operation is a deliberate, user-surfaced downgrade (§4.6, §6), never the silent
-default. Core exists so a minimal or special-purpose implementation (e.g. a gateway, a test
-harness) can interoperate on the message spine, not so a shipping mail client can skip metadata
-privacy. Privacy is a first-class requirement of the protocol, not an optional add-on level — the
-Private level is the *normal* baseline, and the mixnet it depends on is fully specified in §4.4 /
-§6.3 (Sphinx/Loopix, with the parameters of §16.3) rather than left to implementations.
+**Core is the interoperability floor, and — because the standing default privacy tier for mail and
+every control MOTE is `fast` (direct/low-hop, §4.6), not `private` — Core alone is also sufficient
+for a production node to operate at the protocol's own default.** A conformant node needs none of
+the **Private** level: `private`/mixnet is an **opt-in, research-tier** capability
+([docs/research/mixnet.md](docs/research/mixnet.md)), never a conformance requirement, and
+operating a node that only ever uses `fast` is not a downgrade from anything — it is the ordinary,
+undisclosed-nothing default the protocol itself specifies. An implementation that wants to *offer*
+its users the opt-in `private` tier SHOULD additionally implement the **Private** level so that
+choice interoperates byte-exactly with other implementations that made the same choice; the mixnet
+that level depends on is fully specified, for that purpose, in
+[docs/research/mixnet.md §4.4](docs/research/mixnet.md) / §6.3 (Sphinx/Loopix, with the parameters
+of §16.3). Core exists so a minimal or special-purpose implementation (e.g. a gateway, a test
+harness) can interoperate on the message spine — and so, equally, can a full-featured node that
+has simply chosen not to offer the opt-in mixnet.
 
 The **conformance test suite** is the *operational definition* of compatibility. "DMTAP-compatible"
 means "passes the suite," not "resembles the reference." This is the primary defense against
@@ -85,9 +89,13 @@ fragmentation. The suite lives in `conformance/` as three coupled artifacts:
   `PUSH` wake-signaling cases, the `FILE` durability cases, the wave-3 device-cluster `SYNC`,
   `ALIAS`, and gateway-alias `GWALIAS` families, the pluggable-resolver `RESOLVE` family, the
   `PUB` public-object family, the wave-6 anti-drift families — Bootstrap profile
-  (`MIXPROF`, §4.4.10a), derived fleet view (`FLEET`, §4.4.2), guards and path diversity
-  (`GUARD`, §4.4.8), location/resolution order (`LOC`, §4.2), the zero-relationship delivery
-  floor (`FLOOR`, §9.7a/§9.4.1), failure classes (`FAILCLASS`, §10.7.0) and gateway role
+  (`MIXPROF`, [docs/research/mixnet.md §4.4.10a](docs/research/mixnet.md), opt-in mixnet only),
+  derived fleet view (`FLEET`, [docs/research/mixnet.md §4.4.2](docs/research/mixnet.md), opt-in
+  mixnet only), guards and path diversity
+  (`GUARD`, [docs/research/mixnet.md §4.4.8](docs/research/mixnet.md), opt-in mixnet only),
+  location/resolution order (`LOC`, §4.2), the zero-relationship delivery
+  floor (`FLOOR`, §9.7a/[docs/research/vdf.md §9.4.1](docs/research/vdf.md)), failure classes
+  (`FAILCLASS`, §10.7.0) and gateway role
   boundaries (`GWROLE`, §7.1b/§7.11.4), the gateway families (`GWOPS`/`GWSMTP`/`GWATT`/`GWNAME`/
   `GWFLOOR`/`GWLEG`, §7), the auth families (`AUTHORIG`/`AUTHSESS`/`AUTHBRIDGE`, §13), the
   transport, privacy, client, naming, group, anti-abuse, seam, scale, state-machine,
@@ -109,7 +117,8 @@ fragmentation. The suite lives in `conformance/` as three coupled artifacts:
 58 cases are byte-runnable today (52 vector-backed against `vectors.json`/`pub_vectors.json` +
 6 self-contained canonical-CBOR reject cases); 17 further cases are verified by implementer or
 deployment attestation, having **no wire bytes to recompute at all** — an in-product disclosure
-(§22.7 publish consent, §4.4.10a's Bootstrap degradation notice, §25.9's bounded-lifetime /
+(§22.7 publish consent, [docs/research/mixnet.md §4.4.10a](docs/research/mixnet.md)'s Bootstrap
+degradation notice for an implementation offering the opt-in mixnet, §25.9's bounded-lifetime /
 cooperative-revoke disclosure), a client's own claims about a session or an address (§7.10.6,
 §7.15.3), a process boundary (§7.1b), or the population a deployment actually serves (§7.15.4);
 they are the rows marked `manual-attestation` in `conformance/SUITE.md`, each naming the review
@@ -179,10 +188,12 @@ and spec disagree, the spec governs (or the discrepancy is filed as a bug).
 
 DMTAP's downgrade-resistance and fail-closed rules are deliberately scattered across the layers
 that own them — the suite ratchet lives with identity (§1.3), the tier/profile floor with the
-mixnet (§4.4.9), the ack-before-`250` rule with the gateway (§7.4). **Scattering hides gaps:** a
+opt-in mixnet ([docs/research/mixnet.md §4.4.9](docs/research/mixnet.md)), the ack-before-`250`
+rule with the gateway (§7.4). **Scattering hides gaps:** a
 reviewer checking one section cannot see whether the *posture as a whole* is fail-closed, and it was
 exactly two such scattered gaps — the recipient-side **suite high-water-mark** (§1.3) and the
-**in-force-profile floor** for High-security paths (§4.4.9) — that a hardening review surfaced,
+**in-force-profile floor** for High-security paths
+([docs/research/mixnet.md §4.4.9](docs/research/mixnet.md)) — that a hardening review surfaced,
 because each looked complete in isolation while the set had a hole. This subsection therefore
 collects **every** downgrade and fail-closed invariant into one table so the property "DMTAP never
 *silently* accepts a weaker security posture" is checkable as a **set**, not rule-by-rule.
@@ -237,19 +248,24 @@ available.
 | Capability-announce anti-rollback | §10.2 | `caps_version` older-than-or-equal-to the last accepted from that peer | reject the announcement, retain the higher set, `0x030A` |
 | Signed-object extension gating | §10.2, §18.1.2 | an unknown integer key in a **signed** object | decoder fails closed; a reserved `≥ 64` field is sent **only** toward a peer that advertised support |
 
-### 10.7.2 Metadata-privacy (tier/profile/mixnet) downgrades
+### 10.7.2 Metadata-privacy (tier/profile/mixnet) downgrades — applies only to an implementation offering the opt-in `private` tier
+
+Every invariant below governs the **opt-in, research-tier** `private`/mixnet layer
+([docs/research/mixnet.md](docs/research/mixnet.md)); a conformant node that never offers
+`private` (the default tier is `fast`, §4.6) has nothing here to satisfy. For an implementation
+that *does* offer `private`, these remain the correct invariants once offered:
 
 | Invariant | Clause | Trigger | Behavior / error on violation |
 |-----------|--------|---------|-------------------------------|
-| **No `private → fast` / in-force-profile floor** | §4.4.9 | no path meeting the **in-force profile's** bar (Bootstrap ≥ 3 hops/best-effort ≥ 2 ASNs; Standard ≥ 3 hops/≥ 3 operators; High-security ≥ 5/≥ 5) is buildable | hold in the retry queue; **never** silently route over `fast`, fewer hops, fewer operators, or a lower profile's bar; `0x0310`; surface to user past the retry deadline |
-| **Bootstrap profile ratchets up only** | §4.4.10a | a contact whose relationship has already run at Standard (or above) is offered a **Bootstrap**-tier path | fail closed, `0x0310` — the profile ratchets **per contact** like the §1.3 suite high-water-mark; auto-upgrade is mandatory and fallback is forbidden, else DoSing mixes forces the whole network onto the degraded profile (the §4.4.9 attack under a friendlier name) |
-| **Bootstrap profile is disclosed, never claimed as anonymity** | §4.4.10a | client operating on Bootstrap presents `private` as anonymous, or hides the degradation | non-conformant: the client MUST show that metadata privacy is degraded **and why** (current mixes/ASNs vs the Standard bar), and MUST NOT state an anonymity set |
-| Active-attack fail-closed | §4.4.7 | loop-cover return fraction below the loss threshold (§16.3) | rotate away + `HALT_ALERT` + **fail closed** for the `private` tier — never silently continue on a weaker path, `0x030F` |
-| Per-epoch mix replay drop | §4.4.6 | a Sphinx per-hop tag already in the epoch replay cache | `DROP_SILENT`, `0x030E` (cache spans every still-usable key, no hard epoch-boundary flush) |
-| Mix operator-diversity **MUST be attested** | §4.4.8 | a mix whose `operator` is absent/un-attested is counted as fresh diversity | it MUST NOT count as its own operator — excluded or counted shared; keeps the ≈ *a*² compromised-path bound (else one Sybil operator collapses it to ≈ *a*) |
-| Mix fleet view is **derived**, cache verified + rollback | §4.4.2 | a **cached** `MixDirectory` containing a descriptor the client cannot independently verify against its KT log quorum, or an older-or-equal `version` | reject, `0x030B` — a cache is a convenience, never an authority; a log split-view over the mix set is a KT equivocation, `0x0107` |
-| **Mix fleet-view freshness (freeze defense)** | §4.4.2 | a derived view or cache older than the freshness window (§16.3, ≤ one mix-key epoch) — an adversary freezing the client on a stale, adversary-favourable fleet view | **FAIL-QUEUED** (§10.7.0): treat as stale; MUST refresh before building any `private` path; if none is obtainable the sender **queues and retries**, `0x0311` — it MUST NOT downgrade the tier and MUST NOT refuse to enqueue. A directory outage delays mail; it must never stop it. Withheld fresh descriptors are KT-detectable (no new current-epoch entry within the window), and with the authority removed no single party's silence achieves this network-wide |
-| Cover traffic is not optional | §4.4.5, §6.2 | (posture) a `private`-tier node omitting loop/drop/recipient cover | non-conformant — cover is load-bearing, MUST be emitted |
+| **No `private → fast` / in-force-profile floor** | [docs/research/mixnet.md §4.4.9](docs/research/mixnet.md) | no path meeting the **in-force profile's** bar (Bootstrap ≥ 3 hops/best-effort ≥ 2 ASNs; Standard ≥ 3 hops/≥ 3 operators; High-security ≥ 5/≥ 5) is buildable | hold in the retry queue; **never** silently route over `fast`, fewer hops, fewer operators, or a lower profile's bar; `0x0310`; surface to user past the retry deadline |
+| **Bootstrap profile ratchets up only** | [docs/research/mixnet.md §4.4.10a](docs/research/mixnet.md) | a contact whose relationship has already run at Standard (or above) is offered a **Bootstrap**-tier path | fail closed, `0x0310` — the profile ratchets **per contact** like the §1.3 suite high-water-mark; auto-upgrade is mandatory and fallback is forbidden, else DoSing mixes forces the whole network onto the degraded profile (the [docs/research/mixnet.md §4.4.9](docs/research/mixnet.md) attack under a friendlier name) |
+| **Bootstrap profile is disclosed, never claimed as anonymity** | [docs/research/mixnet.md §4.4.10a](docs/research/mixnet.md) | client operating on Bootstrap presents `private` as anonymous, or hides the degradation | non-conformant: the client MUST show that metadata privacy is degraded **and why** (current mixes/ASNs vs the Standard bar), and MUST NOT state an anonymity set |
+| Active-attack fail-closed | [docs/research/mixnet.md §4.4.7](docs/research/mixnet.md) | loop-cover return fraction below the loss threshold (§16.3) | rotate away + `HALT_ALERT` + **fail closed** for the `private` tier — never silently continue on a weaker path, `0x030F` |
+| Per-epoch mix replay drop | [docs/research/mixnet.md §4.4.6](docs/research/mixnet.md) | a Sphinx per-hop tag already in the epoch replay cache | `DROP_SILENT`, `0x030E` (cache spans every still-usable key, no hard epoch-boundary flush) |
+| Mix operator-diversity **MUST be attested** | [docs/research/mixnet.md §4.4.8](docs/research/mixnet.md) | a mix whose `operator` is absent/un-attested is counted as fresh diversity | it MUST NOT count as its own operator — excluded or counted shared; keeps the ≈ *a*² compromised-path bound (else one Sybil operator collapses it to ≈ *a*) |
+| Mix fleet view is **derived**, cache verified + rollback | [docs/research/mixnet.md §4.4.2](docs/research/mixnet.md) | a **cached** `MixDirectory` containing a descriptor the client cannot independently verify against its KT log quorum, or an older-or-equal `version` | reject, `0x030B` — a cache is a convenience, never an authority; a log split-view over the mix set is a KT equivocation, `0x0107` |
+| **Mix fleet-view freshness (freeze defense)** | [docs/research/mixnet.md §4.4.2](docs/research/mixnet.md) | a derived view or cache older than the freshness window (§16.3, ≤ one mix-key epoch) — an adversary freezing the client on a stale, adversary-favourable fleet view | **FAIL-QUEUED** (§10.7.0): treat as stale; MUST refresh before building any `private` path; if none is obtainable the sender **queues and retries**, `0x0311` — it MUST NOT downgrade the tier and MUST NOT refuse to enqueue. A directory outage delays mail; it must never stop it. Withheld fresh descriptors are KT-detectable (no new current-epoch entry within the window), and with the authority removed no single party's silence achieves this network-wide |
+| Cover traffic is not optional | [docs/research/mixnet.md §4.4.5](docs/research/mixnet.md), §6.2 | (posture) a `private`-tier node omitting loop/drop/recipient cover | non-conformant for a `private`-offering implementation — cover is load-bearing, MUST be emitted |
 
 ### 10.7.3 Trust-binding (KT / identity / group) fail-closed
 

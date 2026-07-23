@@ -328,10 +328,14 @@ the prefix is mandatory and why §18.1.5 makes the suite authoritative over it.
 Because an `Identity` may carry an anchor suite differing from its operational
 suite (§1.2.0), a decoder MUST select the length row by **the suite of the key that made the
 signature**, not by a single per-object suite. The 7 920 B `sig-val` is why an anchor-signed
-announcement is a **top-rung** MOTE on the bucket ladder (§4.4.1).
+announcement is a **top-rung** MOTE on the bucket ladder ([docs/research/mixnet.md
+§4.4.1](docs/research/mixnet.md) — the ladder itself is dimensioned for the opt-in `private`
+tier's Sphinx cells; the size class it defines is reused here for inline sizing regardless of
+which tier a MOTE actually travels on).
 
 The PQ (`0x02`/`0x03`/`0x04`) lengths are **normative**, not forward planning: `0x02` is the v0
-originating suite (§1.1) and the bucket ladder is dimensioned from these numbers (§4.4.1). An
+originating suite (§1.1) and the bucket ladder is dimensioned from these numbers
+([docs/research/mixnet.md §4.4.1](docs/research/mixnet.md)). An
 implementation that does not yet support a suite MUST reject objects in it fail-closed
 (`ERR_UNKNOWN_SUITE`, §21.3) rather than guessing — but it is **not conformant while it cannot
 originate `0x02`**, and MUST NOT read that rejection rule as permission to originate `0x01`
@@ -583,7 +587,7 @@ Durability = {
 | `Attachment` | `name` | 1 | `tstr` | MUST | Display name; MUST be treated as untrusted (path-sanitize on save). UTF-8. |
 | | `mime` | 2 | `tstr` | MUST | Declared media type. |
 | | `size` | 3 | `u64` | MUST | Plaintext size in bytes. |
-| | `inline` | 4 | `bytes` | OPTIONAL | The encrypted-then-inlined content, present **iff** the file is ≤ the inline threshold (v0 ≤ 48 KiB of content; the padded MOTE then occupies the 64 KiB top rung, §16.4, §4.4.1). Mutually exclusive with `manifest`. |
+| | `inline` | 4 | `bytes` | OPTIONAL | The encrypted-then-inlined content, present **iff** the file is ≤ the inline threshold (v0 ≤ 48 KiB of content; the padded MOTE then occupies the 64 KiB top rung, §16.4, [docs/research/mixnet.md §4.4.1](docs/research/mixnet.md)). Mutually exclusive with `manifest`. |
 | | `manifest` | 5 | `ManifestRef` | OPTIONAL | Reference to the file's manifest, present **iff** the file exceeds the inline threshold. Mutually exclusive with `inline`. Exactly one of {`inline`,`manifest`} MUST be present. |
 | | `key` | 6 | `enc-key` | MUST | Per-file content key; the recipient decrypts chunks (or `inline`) with it. Travels only inside the (private) MOTE. |
 | `ManifestRef` | `id` | 1 | `hash` | MUST | Content address = Merkle-DAG root of the `Manifest` over its ordered chunk hashes (§18.9.5). |
@@ -1237,13 +1241,25 @@ LocationRecord = {
 > field, so appendix and prose agree; a resolver MUST reject any record whose `seq` is older-or-
 > equal to one already seen.
 
-### 18.5.2 `MixNodeDescriptor` (§4.4.2)
+**§18.5.2–§18.5.4 wire objects below serve the opt-in, research-tier mixnet only (normative
+status).** The mixnet itself is non-normative / experimental
+([docs/research/mixnet.md](docs/research/mixnet.md)); the transport-tier default is `fast`
+(direct, §4.5), not `private`. These CDDL/byte-layout definitions are kept **normative as wire
+encodings** — an implementation that *does* offer the opt-in `private` tier MUST encode them
+exactly as specified, so two mixnet-offering implementations interoperate — but **a conformant
+node needs none of them**: offering the mix role or the `private` tier is entirely OPTIONAL, and
+the section numbers below (`§4.4.x`) are the original `04-transport.md` numbering, preserved
+unchanged at [docs/research/mixnet.md](docs/research/mixnet.md) (not present in this family's
+normative transport section any longer).
+
+### 18.5.2 `MixNodeDescriptor` ([docs/research/mixnet.md §4.4.2](docs/research/mixnet.md))
 
 A signed self-descriptor a mix node publishes so senders can route Sphinx packets (§4.4.1)
 through it. It advertises the node's **Sphinx mix public key(s)** per epoch (§4.4.4), its
 reachability, and its **stratified layer** (§4.4.3). It is discovered via the `MixDirectory`
 (§18.5.3), which is bound to the existing DNS/KT trust (§4.4.2); a descriptor is otherwise an
-ordinary signed identity-style object.
+ordinary signed identity-style object. (§4.4.x section numbers in this subsection and §18.5.3–
+§18.5.4 refer to [docs/research/mixnet.md](docs/research/mixnet.md), per the banner above.)
 
 ```cddl
 MixNodeDescriptor = {
@@ -1276,7 +1292,7 @@ mix-layer   = 0..2
 | | `mix_key` | 2 | `enc-key` | MUST | Sphinx per-hop public key for this epoch (v0 X25519). |
 | | `valid_until` | 3 | `ts` | MUST | End of this epoch's validity; a packet built to an expired epoch key is rejected (`ERR_MIX_DESCRIPTOR_STALE`, `0x030C`). |
 
-### 18.5.3 `MixDirectory` (§4.4.2)
+### 18.5.3 `MixDirectory` ([docs/research/mixnet.md §4.4.2](docs/research/mixnet.md))
 
 The signed, versioned, **KT-anchored** snapshot of the mix fleet for an epoch — the mixnet analog
 of the `DomainDirectory` (§18.4.7) and subject to the same "indexes, does not forge" discipline.
@@ -1309,7 +1325,7 @@ MixDirectory = {
 | `ts` | 7 | `ts` | MUST | Publication time. |
 | `sig` | 8 | `sig-val` | MUST | Directory-authority signature (§18.9.9). |
 
-### 18.5.4 `SphinxCell` — packet, β routing-command, SURB & fragment framing (§4.4.1)
+### 18.5.4 `SphinxCell` — packet, β routing-command, SURB & fragment framing ([docs/research/mixnet.md §4.4.1](docs/research/mixnet.md))
 
 Sphinx is a **fixed-length binary** packet, **not** deterministic CBOR — so, unlike every object
 above, `SphinxCell` and its sub-structures are pinned as **byte layouts** (they are on the mixnet
@@ -1733,11 +1749,11 @@ ProvenanceRecord = {
 
 | Field | Key | Type | Presence | Meaning & constraints |
 |-------|----:|------|----------|-----------------------|
-| `tier` | 1 | `u8` | MUST | The tier the message arrived on **as the recipient node observed it** (§4.6): `1` = `private` (peeled off the mixnet, §4.4), `2` = `fast` (direct/low-hop, §4.5). A recipient node knows this from *how it received the packet*; it is not a sender assertion. |
-| `profile` | 2 | `u8` | MUST | The mix profile the arrival is consistent with (§4.4.10): `0` = not applicable (`tier = 2`), `1` = Standard (≥ 3 hops), `2` = High-security (≥ 5 hops). For `private` this states the **minimum-viable-path guarantee that held** (§4.4.9), not a measured path. |
+| `tier` | 1 | `u8` | MUST | The tier the message arrived on **as the recipient node observed it** (§4.6): `1` = `private` (peeled off the opt-in, research-tier mixnet, [docs/research/mixnet.md §4.4](docs/research/mixnet.md)), `2` = `fast` (direct/low-hop, the default tier, §4.5). A recipient node knows this from *how it received the packet*; it is not a sender assertion. |
+| `profile` | 2 | `u8` | MUST | The mix profile the arrival is consistent with ([docs/research/mixnet.md §4.4.10](docs/research/mixnet.md)): `0` = not applicable (`tier = 2`), `1` = Standard (≥ 3 hops), `2` = High-security (≥ 5 hops). For `private` this states the **minimum-viable-path guarantee that held** ([docs/research/mixnet.md §4.4.9](docs/research/mixnet.md)), not a measured path — applicable only when the opt-in `private` tier is in use. |
 | `origin` | 3 | `u8` | MUST | `0` = **pure-mesh** — no gateway attestation present, so the message was **never plaintext at a gateway** (the soundness of this claim rests on §7.2a making a gateway attestation mandatory for legacy-origin mail; §7.8). `1` = **gateway-touched / legacy-origin** — ≥ 1 verified attestation. |
 | `gateways` | 4 | `[* GatewayAttestation]` | MUST (MAY be empty) | The **verified** attestation chain copied from `Payload.provenance` (§18.3.11) **after** each entry's signature has been checked (§18.9.11); entries that failed verification are **excluded** (a message with an unverifiable required attestation is rejected upstream, §19.3.1, and never reaches this record). Empty **iff** `origin = 0`. Temporal order (ascending `seq`). |
-| `min_hops` | 5 | `u8` | OPTIONAL | A **coarse, privacy-safe lower bound** on hop count. For `private` it MUST equal the profile floor (`3` Standard / `5` High-security, §4.4.10) — the **guaranteed** minimum-viable-path length, **not** a measured or exact path, and it MUST NOT enumerate, identify, or count-beyond-the-floor the mixes traversed: the recipient node **cannot** know the full private path (that is precisely the mixnet's anonymity guarantee, §6.8) and MUST NOT synthesize one. For `fast` it MAY reflect the directly-observed hop (`1`), which exposes nothing beyond what `fast` already reveals (§6.5). |
+| `min_hops` | 5 | `u8` | OPTIONAL | A **coarse, privacy-safe lower bound** on hop count. The field stays defined regardless of whether an implementation offers the opt-in `private` tier. For `private` (research-tier, [docs/research/mixnet.md](docs/research/mixnet.md)) it MUST equal the profile floor (`3` Standard / `5` High-security, [docs/research/mixnet.md §4.4.10](docs/research/mixnet.md)) — the **guaranteed** minimum-viable-path length, **not** a measured or exact path, and it MUST NOT enumerate, identify, or count-beyond-the-floor the mixes traversed: the recipient node **cannot** know the full private path (that is the research-tier mixnet's stated privacy design goal for the opt-in tier, not a default guarantee, §6.8) and MUST NOT synthesize one. For `fast` (the default tier) it MAY reflect the directly-observed hop (`1`), which exposes nothing beyond what `fast` already reveals (§6.5). |
 | `observed_at` | 6 | `ts` | OPTIONAL | The recipient node's reception time. Local; never leaves the owner's device cluster. |
 
 **Privacy invariants (normative, §6.8).** A `ProvenanceRecord`:
@@ -2239,17 +2255,19 @@ reject any mismatch of `rp_origin`/`aud`, MUST NOT grant a scope broader than th
 (`Assertion.from`), verified against the pinned `name → key` identity (§3.4) — **not** the session
 key (which `cnf` merely commits) and not `IK` used directly for routine logins.
 
-### 18.9.9 Mixnet objects
+### 18.9.9 Mixnet objects (opt-in, research-tier — [docs/research/mixnet.md](docs/research/mixnet.md))
 
 `MixNodeDescriptor.sig` and `MixDirectory.sig` use the general rule
 (`Sign(sk, DS-tag ‖ 0x00 ‖ det_cbor(object ∖ {sig}))`) with tags `DMTAP-v0/mix-descriptor` /
 `DMTAP-v0/mix-directory`. The `MixNodeDescriptor` signing key is an **`IK`-authorized device key**
 of the descriptor's `node_ik` (verified via that node's `Identity`, §1.2); the `MixDirectory`
-signing key is the **directory-authority IK** pinned via DNS/KT (§4.4.2, threshold-held per
-§5.8.6 where a set/quorum is used). The **Sphinx per-hop wrapping** of a MOTE is **not** a DMTAP
-CBOR signature — it is the Sphinx packet construction of §4.4.1 (per-hop MAC + re-randomized
-group element), verified by each mix peeling its layer, and is out of scope for this preimage
-table (it carries no `sig-val` field).
+signing key is the **directory-authority IK** pinned via DNS/KT ([docs/research/mixnet.md
+§4.4.2](docs/research/mixnet.md), threshold-held per §5.8.6 where a set/quorum is used). The
+**Sphinx per-hop wrapping** of a MOTE is **not** a DMTAP CBOR signature — it is the Sphinx packet
+construction of [docs/research/mixnet.md §4.4.1](docs/research/mixnet.md) (per-hop MAC +
+re-randomized group element), verified by each mix peeling its layer, and is out of scope for this
+preimage table (it carries no `sig-val` field). These preimages apply only to an implementation
+that offers the opt-in `private` tier; a conformant node needs none of them.
 
 ### 18.9.10 Deniable-mode objects (§5.2.1)
 
@@ -2353,8 +2371,9 @@ parent's `aud`, §18.7.3). A signature/attenuation/expiry failure anywhere in th
 `ERR_CAPABILITY_DELEGATION_INVALID` (`0x0508`); a covering revocation is `ERR_CAPABILITY_REVOKED`
 (`0x050B`). The `Capability` sub-map has no signature of its own — it is covered by the enclosing
 token's `sig`. **`SphinxCell` and its sub-structures (§18.5.4) carry no DMTAP `sig-val`** — their
-integrity is the Sphinx per-hop MAC / wide-block PRP (§4.4.1, §18.9.9), the same
-"security-from-a-different-proof-system" case as `ArcToken`/deniable frames.
+integrity is the Sphinx per-hop MAC / wide-block PRP ([docs/research/mixnet.md
+§4.4.1](docs/research/mixnet.md), §18.9.9), the same "security-from-a-different-proof-system" case
+as `ArcToken`/deniable frames.
 
 ### 18.9.15 Push wake-signaling objects (`PushSubscription.sig`, `WakePing`) (§4.9)
 
@@ -2667,12 +2686,14 @@ LocationRecord = {
   4 => u64, 5 => u64, 6 => ts, ? 8 => u8, 7 => sig-val,   ; 8 = substrate tag (§21.24); absent ⇒ 0x01 libp2p
 }
 
-; ── mixnet layer (§4.4) ────────────────────────────────────────────
+; ── mixnet layer (opt-in, research-tier; docs/research/mixnet.md §4.4) ──────────────
 ; A signed descriptor for one mix node, and the signed per-epoch directory of them.
+; Wire encodings stay normative for any implementation that offers the mixnet; the
+; mixnet itself is non-normative / opt-in — see docs/research/mixnet.md.
 MixKeyEntry     = { 1 => u64, 2 => enc-key, 3 => ts }        ; epoch, Sphinx mix public key, valid-until
 MixNodeDescriptor = {
   1 => suite, 2 => ik-pub, 3 => [* maddr], 4 => [+ MixKeyEntry],
-  5 => mix-layer, ? 9 => ik-pub, ? 8 => u8, 6 => ts, 7 => sig-val,  ; 9=operator (§4.4.8); 8=substrate (§21.24, absent⇒0x01 libp2p)
+  5 => mix-layer, ? 9 => ik-pub, ? 8 => u8, 6 => ts, 7 => sig-val,  ; 9=operator (docs/research/mixnet.md §4.4.8); 8=substrate (§21.24, absent⇒0x01 libp2p)
 }
 mix-layer       = 0..2                                       ; stratified position: 0=entry,1=middle,2=exit
 MixDirectory = {
@@ -2889,7 +2910,8 @@ sealed in `Payload`; `ProvenanceRecord` is the §8.6/§19.9 client-facing assemb
 mesh-transmitted, not signed, §18.9.12; `SignedTreeHead`/`InclusionProof`/`ConsistencyProof` are the
 §3.5 RFC-6962 KT binding; `CapabilityToken`/`Capability`/`CapabilityRevocation` are the §13.5
 delegation binding.) (The mixnet objects `MixNodeDescriptor`/`MixDirectory`/`MixKeyEntry` plus the
-byte-layout `SphinxCell` are the §4.4 mixnet binding; the deniable `DeniableFrame`/`DeniableInit`/
+byte-layout `SphinxCell` are the opt-in, research-tier mixnet binding
+([docs/research/mixnet.md §4.4](docs/research/mixnet.md)); the deniable `DeniableFrame`/`DeniableInit`/
 `DeniableMessage`/`DeniablePayload`/`DeniablePrekeyBundle` are the §5.2.1 binding; the
 Double-Ratchet/X3DH/PQXDH cryptographic cores are specified by reference — Signal's designs in
 §5.2.1 — not re-encoded as CDDL objects here.)

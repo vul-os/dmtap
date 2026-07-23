@@ -20,7 +20,7 @@ whoever wants it:
 | Role | Who can take it | What it does | Durable state? | Needs a scarce resource? |
 |------|-----------------|--------------|:--------------:|--------------------------|
 | **Relay** | any node with a public address | reachability hop for NAT'd nodes; content-blind (§4.3) | No | No |
-| **Mix** | any always-on node with a public address — **default-on** (§4.4.2a) | a mixnet hop (§4.4, §6); content-blind | No | No |
+| **Mix** | any always-on node with a public address — **opt-in, research-tier, NOT default-on** ([docs/research/mixnet.md §4.4.2a](docs/research/mixnet.md)) | a hop for the opt-in, research-tier mixnet ([docs/research/mixnet.md §4.4](docs/research/mixnet.md), §6); content-blind | No | No |
 | **Buffer / relay-mailbox** | peers, the owner's other devices, optionally a third party — an **n-of-m** set (§14.3) | short-TTL content-blind hold for an offline identity | No (TTL'd ciphertext) | No |
 | **KT log** | anyone with append-only storage | tamper-evident `name → key` history others audit (§3.5) | log only | No |
 | **Rendezvous / bootstrap entry** | any node with a stable address | non-DHT lookup fallback and first-contact entry (§4.2.1, §4.2.2) | No | No |
@@ -196,12 +196,19 @@ cluster device (§5.6) or the **portable encrypted backup** of §1.4 — not the
 
 ## 14.6 Network status — what a public status page may measure (normative)
 
-DMTAP's own conformance rules make the network's *size and diversity* operationally significant:
-which mixnet profile a sender may use (Bootstrap / Standard / High-security, §4.4.10) depends on how
+For an implementation that offers the opt-in, research-tier mixnet
+([docs/research/mixnet.md](docs/research/mixnet.md)), the network's *size and diversity* is
+operationally significant to that tier: which mixnet profile a sender may use
+(Bootstrap / Standard / High-security,
+[docs/research/mixnet.md §4.4.10](docs/research/mixnet.md)) depends on how
 many ASN-diverse mixes exist, and the **Bootstrap → Standard** progression is a
-threshold the client must be able to observe (§4.4.10, §16.3). Something must therefore publish an
-**observation of the network**. This section bounds what that may be, because a status page is the
-most natural place for an authority to grow back.
+threshold the client must be able to observe
+([docs/research/mixnet.md §4.4.10](docs/research/mixnet.md), §16.3). Something must therefore
+publish an **observation of the network**. This section bounds what that may be, because a status
+page is the most natural place for an authority to grow back. Most of what a status page reports
+(§14.6.1) is basic mesh liveness with no dependency on the mixnet; only the mix-role/ASN-diversity
+figure and §14.6.3's profile table are specific to an implementation that offers the opt-in
+`private` tier.
 
 ### 14.6.1 What it measures (the network, never users)
 
@@ -211,7 +218,7 @@ A conformant public status page reports **only** aggregate network-shape figures
 |---------|----------------|
 | Reachable nodes | basic liveness of the mesh |
 | Always-on nodes (public address) | the pool from which the roles below are drawn |
-| **Mix-role nodes, and their ASN diversity** | decides which mixnet profile the network supports (§4.4.10) |
+| **Mix-role nodes, and their ASN diversity** (only meaningful where the opt-in mixnet is offered) | decides which mixnet profile the network supports ([docs/research/mixnet.md §4.4.10](docs/research/mixnet.md)) |
 | KT logs (and how many are independently operated) | whether a `> n/2` quorum over disjoint operators is achievable (§3.5.2(b)) |
 | Rendezvous nodes / bootstrap entries | whether §4.2.2's multi-node, multi-ASN requirement is satisfiable |
 | Gateways (count, and ASN/jurisdiction spread) | the health of the one scarce role (§7.1a) |
@@ -221,37 +228,45 @@ A conformant public status page reports **only** aggregate network-shape figures
 
 - **It is a DERIVED observation, never a registry.** Figures are computed from
   **self-reported-and-cross-checked** observations — a node's own published descriptor, corroborated
-  by other observers' reachability probes — exactly as the mix fleet view is derived rather than
-  signed (§4.4.2). No node registers with it, no node needs its approval, and **no protocol
-  behaviour may depend on trusting it**: a client MUST make its own profile determination from its
-  own derived fleet view (§4.4.2, §4.4.9), and MAY use a status page only as a human-facing
-  corroboration. A status page that becomes load-bearing has become the directory authority §4.4.2
-  deleted.
+  by other observers' reachability probes — exactly as the (opt-in) mix fleet view is derived
+  rather than signed ([docs/research/mixnet.md §4.4.2](docs/research/mixnet.md)). No node registers
+  with it, no node needs its approval, and **no protocol
+  behaviour may depend on trusting it**: a client that offers the mixnet MUST make its own profile
+  determination from its own derived fleet view
+  ([docs/research/mixnet.md §4.4.2, §4.4.9](docs/research/mixnet.md)), and MAY use a status page
+  only as a human-facing corroboration. A status page that becomes load-bearing has become the
+  directory authority [docs/research/mixnet.md §4.4.2](docs/research/mixnet.md) deleted.
 - **It MUST NOT deanonymize a user or reveal any part of the social graph.** No per-identity data,
   no per-mailbox data, no message counts attributable to anyone, no correspondent pairs, no
   per-node traffic volumes that could be intersected with a target's activity. Aggregate counts of
   *infrastructure*, never of *behaviour*.
 - **It measures the NETWORK, not users' activity.** Message volume, delivery latency histograms
-  and similar activity series are **out of scope** — they are exactly the timing corpus the mixnet
-  exists to deny (§4.4.5, §6.6 item 1). An implementation MUST NOT emit per-user telemetry to any
-  such service, and MUST NOT make participation in measurement a condition of anything.
+  and similar activity series are **out of scope** — they are exactly the timing corpus the
+  opt-in mixnet exists to deny for implementations that offer it
+  ([docs/research/mixnet.md §4.4.5](docs/research/mixnet.md), §6.6 item 1). An implementation MUST
+  NOT emit per-user telemetry to any such service, and MUST NOT make participation in measurement a
+  condition of anything.
 - **Multiple, competing status pages are the healthy state.** Anyone may run one; disagreement
   between two is information, not an error. There is no canonical publisher, and this specification
   names none.
 
-### 14.6.3 Tie-in to the mixnet profiles (normative)
+### 14.6.3 Tie-in to the (opt-in) mixnet profiles — applies only where the mixnet is offered (non-normative for a conformant node)
 
-The status page's mix-count and ASN-diversity figures are the human-readable form of the same
-thresholds §4.4.10 makes normative:
+For an implementation that offers the opt-in, research-tier mixnet, the status page's mix-count
+and ASN-diversity figures are the human-readable form of the same
+thresholds [docs/research/mixnet.md §4.4.10](docs/research/mixnet.md) sets for that tier. None of
+this table is required of a conformant DMTAP node — the default tier is `fast`, and offering the
+`private` tier at all is opt-in:
 
-| Observed fleet | Profile the network can support |
+| Observed fleet | Profile the (opt-in) mixnet can support |
 |----------------|---------------------------------|
 | < 3 ASN-diverse public mixes | no `private` tier at all — `fast` only, disclosed (§6.6 item 13) |
-| ≥ 3 ASN-diverse mixes, < 20-node guard sample | **Bootstrap** profile: 3 hops, degraded, no anonymity claim, auto-upgrading (§4.4.10) |
-| ≥ 20-node ASN-diverse guard sample, ≥ 3 disjoint operator ASNs | **Standard** — the ordinary default (§16.3) |
-| ≥ 5 disjoint operator ASNs with capacity for 5-hop paths | **High-security** available to those who select it (§4.4.10) |
+| ≥ 3 ASN-diverse mixes, < 20-node guard sample | **Bootstrap** profile: 3 hops, degraded, no anonymity claim, auto-upgrading ([docs/research/mixnet.md §4.4.10](docs/research/mixnet.md)) |
+| ≥ 20-node ASN-diverse guard sample, ≥ 3 disjoint operator ASNs | **Standard** — the mixnet's own default profile when the opt-in `private` tier is in use (§16.3) |
+| ≥ 5 disjoint operator ASNs with capacity for 5-hop paths | **High-security** available to those who select it ([docs/research/mixnet.md §4.4.10](docs/research/mixnet.md)) |
 
-A client MUST derive its own answer to this question (§4.4.9); the table exists so that a human
+A client that offers the mixnet MUST derive its own answer to this question
+([docs/research/mixnet.md §4.4.9](docs/research/mixnet.md)); the table exists so that a human
 reading a status page and a node computing a path are looking at the same thresholds.
 
 ## 14.7 Grounding

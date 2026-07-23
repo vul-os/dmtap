@@ -62,11 +62,13 @@ unknown-key discipline unchanged.
 - **Not a media protocol.** See "What this profile does not specify" above. An implementation that
   wants to change how video is encoded, paced or forwarded changes its media stack, not this
   appendix.
-- **Not metadata-private.** A real-time call cannot ride the mixnet (§4.4) and this appendix does
+- **Not metadata-private.** A real-time call cannot ride the opt-in, research-tier mixnet
+  ([docs/research/mixnet.md §4.4](docs/research/mixnet.md)) and this appendix does
   not pretend otherwise: the mixnet's Poisson per-hop delays, 2 KiB cells and cover traffic are
   designed for a latency budget of minutes (§4.6), which is three orders of magnitude past what a
-  conversation tolerates. Calls are a `fast`-tier act by construction (§27.4.6), and the honest
-  consequence is stated in §27.11 rather than papered over.
+  conversation tolerates. Calls are a `fast`-tier act by construction (§27.4.6) — which is also the
+  default tier for everything else — and the honest consequence is stated in §27.11 rather than
+  papered over.
 - **Not an MCU.** Server-side mixing is out of scope and is incompatible with this profile's
   central guarantee (§27.7.3).
 - **Not a recording, transcription or captioning specification.** A participant that records or
@@ -146,11 +148,15 @@ it is correct is the reason it does not generalize here.
   caller's delivery state machine (§20.1) reports exactly what happened, and no ghost message is
   ever displayed. This is not a stylistic preference — it is a concrete, user-visible failure that
   only the kind allocation avoids.
-- **The privacy tier is a per-kind default, and this kind's default must differ.** §4.6 makes
-  `private` (mixnet) the default for mail "and all control messages." A signaling exchange whose
-  offer/answer round trip took minutes is not a call at all (§27.4.6). Kind is the field DMTAP
-  already uses to carry a tier default; a metadata field cannot carry one, because by the time the
-  metadata is parsed the routing decision has been made.
+- **The privacy tier is a per-kind default, and this kind's default must be pinned regardless of
+  what a peer has opted into.** §4.6's default tier for mail and control messages is `fast`
+  (direct/low-hop); the opt-in, research-tier `private` mixnet
+  ([docs/research/mixnet.md §4.4](docs/research/mixnet.md)) is a deliberate, user-surfaced choice a
+  peer may make for its *other* traffic. A signaling exchange whose offer/answer round trip took
+  minutes is not a call at all (§27.4.6), so call signaling MUST ride `fast` even for a peer that
+  has otherwise opted into `private` — kind is the field DMTAP already uses to pin a message's tier
+  independently of what its sender's general preference is; a metadata field cannot carry that
+  override, because by the time the metadata is parsed the routing decision has been made.
 - **`kind` is bound into both signatures; a metadata field is bound into one.** `Envelope.kind` is
   covered by `sender_sig` (§18.9.1) *and* by `Payload.sig` (§18.9.2, enforced at
   `ERR_ENVELOPE_CONTEXT_MISMATCH`, `0x0211`). A relabel of a signaling message into another kind is
@@ -337,24 +343,32 @@ these three:
   array — is `ERR_MALFORMED_OBJECT` (`0x020D`, DROP_SILENT), the disposition §21.4 already assigns
   to any object that fails its schema.
 
-### 27.4.6 Tier: signaling rides `fast`, and that is disclosed, not silent (normative)
+### 27.4.6 Tier: signaling always rides `fast`; a reduction from an established `private` relationship is disclosed, not silent (normative)
 
-§4.6 makes `private` — the mixnet path — the default tier for mail "and all control messages."
-`rtc_signal` is a control message and this profile makes its default `fast`. That is a significant
-statement and it is made explicitly rather than by omission:
+§4.6's default tier for mail and control messages is `fast` (direct/low-hop). The opt-in,
+research-tier `private` mixnet ([docs/research/mixnet.md §4.4](docs/research/mixnet.md)) is a
+deliberate, user-surfaced choice a peer may make for its *other* traffic, never a default. `rtc_
+signal` is a control message and this profile pins its tier to `fast` **unconditionally** —
+including for a contact whose other traffic has opted into `private` — because real-time media has
+no `private`-tier construction to use instead. That pin, and its one user-visible consequence, are
+stated explicitly rather than left to be discovered:
 
-- **A mixnet-carried call is not a call.** The `private` tier's latency budget is minutes (§4.6,
-  §16.3); an offer/answer round trip plus trickled candidates over that path would place call setup
-  in the tens of minutes, and media over it is not merely slow but structurally impossible (§4.4's
-  cell size, padding and cover-traffic construction is not a media transport). This is not a
-  preference; there is no `private`-tier design for real-time media to downgrade *from*.
-- **This is NOT a §4.4.9 downgrade, and MUST NOT be implemented as one.** `ERR_PRIVATE_TIER_
+- **A mixnet-carried call is not a call.** The opt-in `private` tier's latency budget is minutes
+  (§4.6, §16.3); an offer/answer round trip plus trickled candidates over that path would place
+  call setup in the tens of minutes, and media over it is not merely slow but structurally
+  impossible ([docs/research/mixnet.md §4.4](docs/research/mixnet.md)'s cell size, padding and
+  cover-traffic construction is not a media transport). This is not a preference; there is no
+  `private`-tier design for real-time media to downgrade *from*.
+- **This is NOT a [docs/research/mixnet.md §4.4.9](docs/research/mixnet.md) downgrade, and MUST
+  NOT be implemented as one.** `ERR_PRIVATE_TIER_
   DOWNGRADE_REFUSED` (`0x0310`) polices a *message that could have gone private* being routed
   `fast` instead. A `rtc_signal` has no `private` construction, so nothing is being downgraded.
   What an implementation MUST NOT do is take this clause as licence to route *other* kinds `fast`
   because a call is in progress: the tier default is per-kind, and every other kind keeps its own.
 - **Placing a call to a contact whose relationship runs `private` MUST be an explicit user act.**
-  It MUST NOT be automatic, MUST NOT be a fallback from a failed private send, and the client MUST
+  Because that contact's other traffic runs on the opt-in `private` tier, a call to them is a
+  visible reduction from that established posture, not merely the ordinary `fast` default. It MUST
+  NOT be automatic, MUST NOT be a fallback from a failed private send, and the client MUST
   surface — before the first signaling MOTE leaves — that a call reveals the call's existence, its
   timing and its duration to observers, and its endpoint addresses to the peer or the SFU (§27.11).
   Refusing is the default if the user does not consent. This is the same shape as §5.2.1(d)'s
@@ -787,8 +801,10 @@ is a defect awaiting a fix; each is an inherent consequence of the design above.
    `a=content:slides`-labelled m-section it routes), **each participant's IP address and rough
    location**, and **per-packet sizes and timing**, from which activity, speech patterns and even
    coarse video content characteristics can be inferred. Traffic analysis of SFrame-protected media
-   is a real and active field, and this profile makes no claim of resistance to it. The mixnet
-   protections of §4.4 that bound this class of leakage for messaging **do not apply here and
+   is a real and active field, and this profile makes no claim of resistance to it. The opt-in,
+   research-tier mixnet's protections
+   ([docs/research/mixnet.md §4.4](docs/research/mixnet.md)) that bound this class of leakage for
+   messaging, for implementations and users that opt into that tier, **do not apply here and
    cannot** (§27.1.2, §27.4.6). A user for whom the *existence* of a call is the sensitive fact
    must not place the call — no protocol setting in this appendix changes that.
 3. **Mesh calls disclose participants' IP addresses to each other.** ICE (RFC 8445) discovers and

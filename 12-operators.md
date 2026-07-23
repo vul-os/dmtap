@@ -103,10 +103,14 @@ protocol makes impossible to sell, and each entry has a structural reason, not m
 1. **Privacy and cryptography.** End-to-end encryption, signing, suite selection, the suite
    high-water-mark (§1.3), key rotation and PQ migration (§1.5, §1.1). *Structural reason:* these
    run entirely between endpoints; no operator is a participant.
-2. **Metadata privacy.** The `private` tier, mixnet path building, entry guards, cover traffic, the
-   profile in force (§4.4), the no-silent-downgrade rule (§4.4.9). *Structural reason:* the mix
-   role is default-on and self-provisioning (§4.4.2a); there is no fleet owner to bill for it, and
-   §12.2's Policy hook MUST NOT be consulted for any privacy decision.
+2. **Metadata privacy.** The opt-in, research-tier `private` tier, mixnet path building, entry
+   guards, cover traffic, the profile in force
+   ([docs/research/mixnet.md §4.4](docs/research/mixnet.md)), the no-silent-downgrade rule
+   ([docs/research/mixnet.md §4.4.9](docs/research/mixnet.md)) — where an implementation offers
+   the mixnet at all (§4.6). *Structural reason:* the mix role is a permissionless, opt-in
+   capability of the node binary, not a default behaviour
+   ([docs/research/mixnet.md §4.4.2a](docs/research/mixnet.md)); there is no fleet owner to bill
+   for it, and §12.2's Policy hook MUST NOT be consulted for any privacy decision.
 3. **Recovery and continuity.** The recovery policy and its factors (§1.4), name migration (§1.6),
    the portable encrypted backup (§1.4). *Structural reason:* a user locked out of recovery is a
    user whose identity has been captured; charging for it would make capture a business model.
@@ -327,8 +331,11 @@ recovery.
   **owner self-monitoring** of every log in the identity's pinned set (STH poll ≤ 6 h) so an
   unauthorized entry raises `HALT_ALERT` (§3.5.2(c)); (3) **≥ 2 independent auditors per log**
   checking append-only extension name-agnostically (§3.5.2(c)); (4) **mix-directory freshness**
-  checks (≤ one mix-key epoch) so a frozen fleet view fails closed (§4.4.2, `0x0311`); and (5)
-  **loop-return telemetry** feeding the active-attack detector (§4.4.7, `0x030F`). These cadences
+  checks (≤ one mix-key epoch) so a frozen fleet view fails closed
+  ([docs/research/mixnet.md §4.4.2](docs/research/mixnet.md), `0x0311`); and (5)
+  **loop-return telemetry** feeding the active-attack detector
+  ([docs/research/mixnet.md §4.4.7](docs/research/mixnet.md), `0x030F`) — items (4) and (5) apply
+  only to an operator whose deployment offers the opt-in, research-tier mixnet. These cadences
   are the operational half of the trust-minimization triad — a trusted party (KT log, mix directory
   authority) is *minimized* by quorum, made *detectable* by this monitoring, and *fails closed* on
   the codes above. An operator that runs the mechanisms but not this cadence has the detectors and
@@ -373,7 +380,9 @@ side-channel, KT federation). Therefore:
   operating outside the project's stated posture. The gate covers the protocol (this spec) and the
   reference node binary (all roles, §0.2) and its libraries.
 - **Re-audit on any major crypto or wire change.** Adding or retiring an algorithm suite (§1.1),
-  changing a signing preimage (§18.9), altering the Sphinx/mixnet construction (§4.4), or changing
+  changing a signing preimage (§18.9), altering the Sphinx/mixnet construction
+  ([docs/research/mixnet.md §4.4](docs/research/mixnet.md), for implementations that offer it), or
+  changing
   the deniable handshake (§5.2.1) re-opens the gate for the affected surface before that change ships
   to production. A CVD fix that touches crypto/wire (§12.8.1) triggers this.
 - **Pre-deployment-reachable, distinct from the bounty.** This audit is **reachable before launch**
@@ -424,26 +433,35 @@ than anonymous infrastructure. Their lifecycle:
 
 - **Joining — attestation.** A **gateway** publishes its attestation key under the served domain
   (`<sel>._dmtap-gw.domain`, §7.2a) and, optionally, a self-signed **discovery descriptor** carrying
-  no score, price, or bond (§7.5); a **mix** publishes a `MixNodeDescriptor` under a KT-auditable
-  `node_ik` **and** a `_dmtap-mix` operator attestation under its domain (§4.4.8) — and **only an
-  attested operator counts toward path operator-diversity** (§4.4.8, §10.7.2), which is what stops a
+  no score, price, or bond (§7.5); a **mix** — an opt-in, research-tier role that exists only for
+  an implementation offering the opt-in mixnet ([docs/research/mixnet.md](docs/research/mixnet.md))
+  — publishes a `MixNodeDescriptor` under a KT-auditable
+  `node_ik` **and** a `_dmtap-mix` operator attestation under its domain
+  ([docs/research/mixnet.md §4.4.8](docs/research/mixnet.md)) — and **only an
+  attested operator counts toward path operator-diversity**
+  ([docs/research/mixnet.md §4.4.8](docs/research/mixnet.md), §10.7.2), which is what stops a
   single party minting *N* fake operators. **No bond or stake is required, offered, or implied**
-  (§4.4.8's normative note, §9.6): enforcing one would need an adjudicator empowered to seize funds,
+  ([docs/research/mixnet.md §4.4.8](docs/research/mixnet.md)'s normative note, §9.6): enforcing one
+  would need an adjudicator empowered to seize funds,
   a more powerful authority than anything else in this document. Sybil cost comes from attestation
   plus ASN/jurisdiction diversity instead.
 - **Reputation is measured locally, by each participant.** Gateways are ranked by the *sending
   node's own* measured deliverability-to-destination (§7.5, §9.6) — never by a published network
-  score, which would need the very authority §4.4.2 removed. Mixes are weighted by each client's own
-  loop-return statistics (§4.4.7–§4.4.8). Neither model is a trust root: a gateway cannot forge
+  score, which would need the very authority [docs/research/mixnet.md §4.4.2](docs/research/mixnet.md)
+  removed. Mixes (where offered) are weighted by each client's own
+  loop-return statistics ([docs/research/mixnet.md §4.4.7–§4.4.8](docs/research/mixnet.md)). Neither
+  model is a trust root: a gateway cannot forge
   identity (DKIM delegation separates deliverability reputation from the user's key, §7.3), and the
-  mix fleet view is **derived from the KT logs, not signed by anyone** (§4.4.2). Misbehavior loses
+  mix fleet view is **derived from the KT logs, not signed by anyone**
+  ([docs/research/mixnet.md §4.4.2](docs/research/mixnet.md)). Misbehavior loses
   path share and traffic automatically under any conforming weighting; there is nothing to slash and
   nobody to do the slashing.
 - **Leaving / revocation — zero lock-in.** A gateway is swapped by a **DNS/DKIM change** with no
   data migration (§7.7) — the box is the authority, so a user drops or switches freely; the
   self-host backstop applies to anyone who can meet §7.1a. A mix leaves by ceasing to publish a
   current-epoch descriptor, and is dropped from every client's derived view at the next epoch
-  (§4.4.2, §4.4.4) — no authority evicts it, because there is no authority. An equivocating KT log
+  ([docs/research/mixnet.md §4.4.2, §4.4.4](docs/research/mixnet.md)) — no authority evicts it,
+  because there is no authority. An equivocating KT log
   operator is **evicted from the pinned set** on self-authenticating evidence (§3.5.2(d), §12.8.2).
   In every case revocation is a **local decision each participant makes for itself**, never a
   protocol entitlement anyone can veto — the same non-lock-in property that makes open service

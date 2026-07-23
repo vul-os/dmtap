@@ -49,7 +49,7 @@ gateway's scarce-resource requirement and turn an adapter into infrastructure:
 |----------|------------------|
 | **buffer** | an n-of-m role held by peers and the owner's own devices (§14.3, §14.5) |
 | **relay** | any public-address node, content-blind (§4.3) |
-| **mix** | default-on for always-on public nodes (§4.4.2a) |
+| **mix** | opt-in, research-tier role for the opt-in mixnet — not default-on, not normative ([docs/research/mixnet.md §4.4.2a](docs/research/mixnet.md)) |
 | **namer** | DNS + KT + the key-name floor; a gateway can alias, never mint a name (§7.10.5, §3.13) |
 | **spam classifier** | recipient-side and on-device, against the user's own corpus (§7.11.4, §9.11) |
 | **mailbox of record** | the node is the authority; the gateway holds no message store (§7.4) |
@@ -371,7 +371,8 @@ Gateways are **discovered**, not ranked. Any operator MAY publish a **self-signe
 descriptor** under its own domain — `{ gateway_ik, domain, modes (§7.12.1), operator_mode
 (§7.15.4), region, attestation selector (§7.2a) }` — which is **discovery-only, self-asserted, and
 carries no score**. It contains no reputation field, no price, and no stake: earlier drafts
-proposed all three, and each has been removed for a distinct reason (stake, per §4.4.8 and §9.6,
+proposed all three, and each has been removed for a distinct reason (stake, per
+[docs/research/mixnet.md §4.4.8](docs/research/mixnet.md) and §9.6,
 needs an adjudicator empowered to seize funds; price is operator policy, §7.13; reputation is the
 subject of the rule below).
 
@@ -393,7 +394,8 @@ when they are.
 **Why not a network-wide score.** A global reputation number needs a party to compute it: something
 must aggregate everyone's observations, weight them, resist gaming, and publish a result. That
 party then decides which gateways receive traffic — which is *precisely* the directory-authority
-problem §4.4.2 removed from the mixnet, reappearing one layer over. It would be a single point of
+problem [docs/research/mixnet.md §4.4.2](docs/research/mixnet.md) removed from the (opt-in,
+research-tier) mixnet, reappearing one layer over. It would be a single point of
 censorship (down-rank an operator into irrelevance), a single point of liveness (its silence stalls
 selection), and the obvious thing to capture, coerce, or simply pay. Local measurement has none of
 those properties, needs no adjudicator, and has a decisive practical advantage besides:
@@ -478,9 +480,10 @@ has three parts.
 
 ### 7.8.1 What a recipient can learn (and what it deliberately cannot)
 
-**(a) Transport tier.** Whether the message arrived on the **`private`** tier (mixnet + cover,
-§4.4) or the **`fast`** tier (direct/low-hop, §4.5). The recipient node knows this from *how it
-received the packet* — it is an **observation**, not a sender claim.
+**(a) Transport tier.** Whether the message arrived on the **`fast`** tier (direct/low-hop, the
+default, §4.5) or the opt-in, research-tier **`private`** tier (mixnet + cover,
+[docs/research/mixnet.md §4.4](docs/research/mixnet.md)). The recipient node knows this from *how
+it received the packet* — it is an **observation**, not a sender claim.
 
 **(b) Gateway-touched vs. pure-mesh.** A message that transited a **legacy gateway** carries that
 gateway's §7.2a attestation (`GatewayAttestation`, §18.3.11) sealed inside its `Payload`
@@ -492,12 +495,14 @@ mail and requires the recipient to **reject** unattested legacy-origin mail (`0x
 §19.3.1): so every *accepted* message is either validly attested (gateway-touched) or attestation-
 free (pure-mesh) — there is no third state in which legacy plaintext slips in unmarked.
 
-**(c) A coarse, privacy-safe hop descriptor.** For the `private` tier the recipient learns only the
-**profile floor** the message satisfied — `≥ 3` hops (Standard) or `≥ 5` (High-security), §4.4.10 —
+**(c) A coarse, privacy-safe hop descriptor.** For the opt-in `private` tier the recipient learns
+only the **profile floor** the message satisfied — `≥ 3` hops (Standard) or `≥ 5` (High-security),
+[docs/research/mixnet.md §4.4.10](docs/research/mixnet.md) —
 **never** the identities, addresses, count-beyond-the-floor, or per-hop timing of the mixes it
-traversed. **This is intentional and is the privacy guarantee, not a gap:** the private tier is
-*designed* so no party — including the recipient's own node — can reconstruct the path (§6.2,
-§4.4). Provenance therefore answers **"which trust boundaries did this cross?"** (a mixnet? a
+traversed. **This is intentional and is the design goal of that opt-in tier, not a gap:** the
+private tier is *designed* so no party — including the recipient's own node — can reconstruct the
+path (§6.2, [docs/research/mixnet.md §4.4](docs/research/mixnet.md)). Provenance therefore answers
+**"which trust boundaries did this cross?"** (a mixnet? a
 gateway? whose?) — **never "which nodes carried it?"**. For the `fast` tier the descriptor MAY note
 the directly-observed hop, which exposes nothing beyond what `fast` already reveals (the graph is
 observable on `fast`, §4.6, §6.5).
