@@ -113,6 +113,17 @@ control-channel handshake + REACH-* error codes) to freeze it, THEN implement th
 spec-perfection fix-agents MUST NOT touch those while REACH is being developed; critique may still READ
 them. Recon agent mapping REACH draft + adapter status in flight; profile draft follows.
 
+**REACH spec-first: DONE `e9a8adf` (deep research `wf_4ff01382-713` → decisive Option A).** REACH-2 rewritten:
+box↔adapter tunnel = **libp2p-Noise `XX`**, each peer's libp2p identity key = its kotva Ed25519 IK;
+signed-static-key payload = SIGMA sign-and-bind, channel-bound by construction (retires the §13 DMTAP-Auth
+mis-citation that had produced an Asokan-vulnerable `nonce‖name`-with-no-binding impl). Added REACH-2b
+control frames (ReachRegister/ReachRegisterAck, session-local, unsigned); reconciled the adapter descriptor
+to §18.8a `CoordinatorDescriptor{kind=reachability-adapter}`; **no new §18 wire object, no new §21 code**;
+§7 states Noise secures the control leg ONLY (does not close the REACH-1a cert residual) + IK dual-signing-
+domain disclosure. Verified: SIGMA framing correct, no overclaim, lint clean. **Impl (wakala) follows the
+freeze** — logged to wakala/COORDINATION.md [2026-07-23 reach] with the 1-day libp2p-noise-0.56 API spike +
+atomicity MUST. Round 4 will re-cover REACH under the convergence gate.
+
 **W3 (simplify):** compress per-doc SEC-invariant/honest-residual boilerplate to reference tables
 (THREAT-MODEL = single argued source, ~15-20% cut, zero normative loss); turn reproduced index tables into
 pointers; publish a minimal "Identity + MOTE + one transport" first-implementation conformance tier.
