@@ -82,7 +82,8 @@ Every byte on the media path is a byte another standards body specified
 
 - **WebRTC** (RFC 8825 stack) — transport, SDP, JSEP, ICE/STUN.
 - **SFrame** (RFC 9605), **keyed from the MLS epoch** — end-to-end media protection that makes the
-  relay `blind`/structural.
+  **media-relay** `blind-routing` (payload sealed; routing metadata still visible) and the **TURN
+  relay** `blind`/structural.
 - **TURN** (RFC 8656; coturn) — the NAT-relay served by the `media-relay` / `relay` role.
 - **MLS** (RFC 9420) — the group, its epochs, and the exporter the media key is derived through.
 - **Distributed SFU** — **LiveKit** (Pion) / **Jitsi Videobridge + Octo** / **mediasoup**:

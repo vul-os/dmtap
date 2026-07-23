@@ -289,7 +289,13 @@ Inherits the family posture of [`THREAT-MODEL.md`](../THREAT-MODEL.md); each MUS
   bounded (§3.2). A **malicious owner can** sign two `accepted` receipts for one unit — that is not a
   distributed-systems failure but a party misbehaving in a way that is **signed, permanent, and
   attributable** (the WRAP [`§ 3.6`](../profiles/wrap/02-objects.md) point). The `Receipt` makes
-  double-booking *evidence*, not *impossibility*, against a dishonest owner.
+  double-booking *evidence*, not *impossibility*, against a dishonest owner — and how detectable that
+  evidence is **differs by grain**: at **grain 0**, two signed `accepted` receipts for one unit become
+  dispute evidence only once the two victims combine them out of band; at **grain 1 (capacity)**, two
+  receipts alone prove nothing, because establishing oversell requires summing granted `qty` across
+  *every* `accepted` receipt for the interval against `cap` — a computation no third party, and no
+  single victim, can perform. Capacity oversell by a dishonest owner is therefore durable evidence but
+  **not individually detectable**.
 - **Non-Byzantine — protects the seller from itself, not the buyer from the seller.** The bounded
   counter's guarantee is **safety-only, paid entirely in liveness, so long as no stranded rights are
   reclaimed** ([`tract § 6.2a`](../profiles/tract/06-cart.md),
