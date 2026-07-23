@@ -1,0 +1,17 @@
+# KOTVA Rust crates — the substrate implementation carved out of envoir so consumers (the envoir
+# node, the Wakala broker) can depend on a stable, *tag-pinned* core instead of tracking a moving
+# path dependency (the isango churn lesson). The spec itself remains prose in this repo; these
+# crates are the reference implementation of the substrate wire.
+#
+# Consumers pin a git tag, never HEAD:
+#   kotva-core = { git = "https://github.com/vul-os/kotva", tag = "core-v0.2.0" }
+#
+# envoir keeps its existing `use dmtap_core::…` code via cargo's dependency-rename:
+#   dmtap-core = { package = "kotva-core", git = "…", tag = "core-v0.2.0" }
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/kotva-core",
+    "crates/kotva-mail",
+]

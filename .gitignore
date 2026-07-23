@@ -5,3 +5,6 @@ build/dmtap.html
 *.swp
 __pycache__/
 *.pyc
+
+# Rust build output
+/target
