@@ -400,6 +400,21 @@ organization→organisation, recognize→recognise, normalize→normalise, analy
 meter→metre (only where it is the unit). **KEEP:** `program` (computing sense), `practice` (the
 noun is identical in British English; only the verb is "practise").
 
+**W5 IS ALL-OR-NOTHING ACROSS FILE SETS, NOT PER-FILE.** The doctrine phrase **"authorize, never
+classify"** appears in 13 files spanning *every* file set — `SPEC.md`, `DIRECTION.md`,
+`THREAT-MODEL.md`, `coordinator/CONTRACT.md`, `conformance/SUITE.md`, three `primitives/`, four
+`profiles/`, `docs/research/PRIMITIVES.md` — and it is the family's most-quoted line. Converting it in
+one file set and not the others leaves the spec saying "authorise, never classify" in `profiles/`
+and "authorize, never classify" in `DIRECTION.md`, which is precisely the inconsistency W6 checks
+for. **Either every occurrence converts in the same wave, or none does.** The same holds for any
+phrase repeated verbatim across documents.
+
+`conformance/scope.json` carries section *titles* as literal strings (e.g. "7.11.4 The gateway
+authorizes; it never classifies (normative)"). **Tested: these are NOT lint-coupled** — `scope.json`
+is keyed by section number, and re-spelling a title leaves lint at 0 errors. So a heading change
+cannot break the build, but scope.json titles must still be swept for consistency, since they are
+copies of headings a reader will compare.
+
 **Sequencing:** run the prose-dense, identifier-light files first (`profiles/`, `primitives/`) to
 validate the method, and only then the numbered core files (`00`–`27`), which are the most
 identifier-dense and where a bad replace is most costly. After every W5 commit, diff-review for
