@@ -255,3 +255,36 @@ RFC 9051 / RFC 9420.
   commit range.
 - If a round keeps surfacing the same residual, escalate it (it may be a genuine founder-call → COORDINATION).
   If **three successive convergence rounds** still find substantive residuals, STOP and report to the user.
+
+---
+
+## CURRENT STATUS (supersedes the wave bookkeeping above)
+
+**Defect class.** Nearly every real finding this pass has been one class: **an invariant the prose
+states that the mechanism does not enforce.** It is invisible to lint and to casual review; it only
+surfaces when a specific mechanism is adversarially traced. Hunt by that heuristic.
+
+**Fixed this pass (all committed + pushed):**
+1. §1.4 stolen-`IK` could weaken `RecoveryPolicy` (gate used a generic `satisfies()` an `Ik` disjunct satisfied) — `ad7e79a`
+2. §18.9.8 login assertion signed a BARE digest → cross-hash forgery — multihash-prefixed
+3. §18.7.3 capability caveats checked only on the LEAF → a child could drop a parent's `require-mfa` — now conjunctive across every chain link, unknown caveat fails closed — `d3eaafe`
+4. §22 `FeedEntry.announce` had no author binding → a current-suite feed could launder a below-floor forgery past the origination floor — `5089cd9`
+5. §5.2.1(a) last-resort replay defence was an OR whose first branch is vacuous exactly when needed — cache now mandatory — `bbf3004`
+6. §2.7 dedup re-acked a COLD duplicate **before** the abuse gate → `ack` became an existence oracle (the doc's own note claimed that ordering prevented it) — `77f0897`
+7. §3.5 **KT bootstrap**: the `kt=` log set was read from the very DNS record it was meant to verify, so a zone-controlling attacker supplied key *and* log and satisfied quorum against itself; v1's "pin a set" inherited the flaw. Now: out-of-band log set ⇒ KT-verified; `kt=`-sourced ⇒ **TOFU-only, MUST NOT be shown as KT-verified**. §3.1's detectability claim qualified — `014c9de`
+8. Interop: `BlindedTag.shared_secret` was circular + `epoch_day` undefined (pinned: `MLS-Exporter` per §27.5.1, `floor(t_ms/86400000)` UTC, ±1 day); epoch acceptance later **bounded to two epochs** after an unbounded rule was found to fight MLS forward secrecy — `d8eab9f`
+9. DEPOT schemas were **named but undefined** → now concrete det-CBOR (no floats; uptime is per-mille `uint`) — `03fab9f`
+10. Bloat retired into existing primitives: `ServiceMeasurement`→ATTEST, `TrustEdge`→ATTEST (the latter violated ATTEST's own "MUST NOT invent a parallel attestation object")
+11. ATTEST↔REPUTATION issuer contradiction resolved (ATTEST gained a pseudonymous-issuer mode with its disqualification stated); REP-2's primitive-depends-on-profile citation fixed — `d6f7b5a`
+12. §10.1 structural-version (DS-tag/`v=dmtap`) migration specified — the hardest-to-change seam — `03f4647`; §10.3a falsifiable Core boundary + the **two senses of "Core"** disambiguated — `06f5f80`, `77f0897`
+
+**Audited → CLEAN:** substrate/* + TRACT + WRAP; §22 PUB; §25 PUBSUB; §5.2.1; SYNC; §18.8a objects;
+deterministic CBOR §18.1; §2.7; §3 (post-fix); §18.7.3; §1.4; DEPOT.
+**In flight:** §13 org/admin + §26 legacy adapters; §12 · §14 · §23 · §24.
+**Never audited (remaining risk is concentrated here):** §19 operations (partial), §16 parameters,
+§17 parity, §20 state machines (partial), §21 registries (partial).
+
+**Convergence honesty.** The three-round stop-rule has fired (≈8 rounds, each finding something real).
+Do NOT declare PERFECTED on a quiet round alone — the honest options are (a) keep hunting
+surface-by-surface, or (b) freeze deliberately **with this audited/un-audited map recorded**. W5
+(South-African English + RFC layout) remains correctly blocked: correctness is still moving.
