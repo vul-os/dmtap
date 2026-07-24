@@ -89,10 +89,10 @@ published score or a protocol token** ([DIRECTION §5](../../DIRECTION.md),
   history — `attested`, never trustless, bindings note). Offline, MATCH degrades to a local order
   book with no global optimality.
 
-## 3. RESERVE — single owner, so double-booking is structurally impossible
+## 3. RESERVE — single owner, so double-booking is structurally impossible between honest participants
 
 - **Bind to:** a **single-writer bounded-counter CRDT** — the host's box is the *only* writer for its
-  own calendar/inventory, so concurrent overselling is impossible by construction (DIRECTION §2). This
+  own calendar/inventory, so concurrent overselling is impossible by construction **between honest participants** — a dishonest owner can still oversell, leaving signed attributable evidence rather than being prevented (RESERVE §9) (DIRECTION §2). This
   is the substrate's §5.6 device-cluster CRDT / SYNC single-owner profile, realized as TRACT's
   bounded-counter inventory (§6) grounded in AntidoteDB `antidote_crdt_counter_b` (SRDS 2015). **No
   coordinator, ever** — RESERVE is the primitive that needs none.

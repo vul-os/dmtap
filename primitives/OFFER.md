@@ -136,7 +136,7 @@ OFFER is the supply object every other primitive reads or writes against:
 | Primitive | Composition with OFFER |
 |---|---|
 | **MATCH** | Consumes two offers (a supply offer + a demand offer / bid) and emits a signed `Assignment`. The assignment rule (nearest / highest-bid / best-fit) is *matcher policy*, not an OFFER field ([DIRECTION §2](../DIRECTION.md)). |
-| **RESERVE** | Holds against an offer's advertised availability. OFFER *signals* stock; RESERVE is the single-writer that *holds* it, so double-booking is structurally impossible. OFR-4 keeps the two from being confused. |
+| **RESERVE** | Holds against an offer's advertised availability. OFFER *signals* stock; RESERVE is the single-writer that *holds* it, so double-booking is structurally impossible **between honest participants** (against a dishonest owner it is attributable *evidence*, not impossibility — [RESERVE §9](RESERVE.md)). OFR-4 keeps the two from being confused. |
 | **REPUTATION** | Attaches to the offer's *author* `IK`, not to the offer. Reviews/attestations are separate signed feed objects keyed to the seller identity; no number rides in the offer (OFR-9). |
 | **ESCROW / PAY** | Settle the `consideration` on the rail after a match. OFFER carries the *ask*; the escrow scope and payment attestation are their own objects — attestations on the wire, funds on the rail. |
 | **ATTEST / ORACLE** | A product record's identity ladder (manufacturer-signed rung, [tract §2.3c](../profiles/tract/02-catalogue.md)) is an ATTEST claim; "did it arrive?" is an ORACLE/dispute question OFFER neither asks nor answers. |

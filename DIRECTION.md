@@ -59,7 +59,9 @@ stablecoin binding. The recipe shorthand `OFFER · MATCH/RESERVE · REPUTATION �
   DISPUTE + PAY, differing only in MATCH's **assignment rule** (nearest / best-fit /
   highest-bid). *One matching engine, not one per service.*
 - **Bookings** need no matcher at all — RESERVE against a single-owner calendar (the host's
-  box is the only writer, so double-booking is structurally impossible).
+  box is the only writer, so double-booking is structurally impossible **between honest
+  participants** — against a dishonest owner it yields signed, attributable *evidence* rather than
+  impossibility, [`primitives/RESERVE.md` §9](primitives/RESERVE.md)).
 - **Commerce / classifieds** = OFFER + ESCROW + REPUTATION + DISPUTE + PAY.
 
 Because the services reduce to the same primitives, building the primitives once builds the
