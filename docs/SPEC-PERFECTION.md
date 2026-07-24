@@ -333,7 +333,31 @@ result worth recording, not a wasted wave.
 
 | # | Lens | The defect class only this lens can find | Status |
 |---|---|---|---|
-| L1 | **Adopted-standards accuracy** (external, web research) | The spec mis-describes an external standard, or the standard moved under it. KOTVA "binds, doesn't reinvent", so a wrong binding is load-bearing. | dispatched 2026-07-24 |
+| L1 | **Adopted-standards accuracy** (external, web research) | The spec mis-describes an external standard, or the standard moved under it. KOTVA "binds, doesn't reinvent", so a wrong binding is load-bearing. | **HIT — see L1-F1 below.** Agent stalled; driver verified the highest-stakes item directly against the RFC. |
+
+**L1-F1 (OPEN — apply when `profiles/` is free; a W5 agent holds it now).** REACH's `structural`
+assurance rests on an RFC 8657 `accounturi`-bound CAA record, and the spec states the consequence as
+absolute: blindness is "*structural*, provable from key placement and account binding" and "the
+adapter **cannot** mint a competing cert for a zone it does not write" (`profiles/reachability.md`
+REACH-1a and §7 SEC-2). **RFC 8657 §5.2, "Restrictions Ineffective without CA Recognition", says the
+opposite of what that assumes:** *"Domains configuring CAA records for a CA MUST NOT assume that the
+restrictions implied by the 'accounturi' and 'validationmethods' parameters are effective in the
+absence of explicit indication as such from that CA."* `accounturi` is **optional CA behaviour** —
+honoured only by the CA named in the `issue`/`issuewild` property, and only if that CA implements it.
+Against a CAA-permitted CA that ignores the parameter, an in-path adapter can still obtain a
+certificate under its own account, and the assurance silently degrades to exactly the `declared` MITM
+residual the spec attributes only to bare vanities.
+
+This is the dominant defect class reached from outside: an invariant the prose states that the
+mechanism does not enforce — here because enforcement belongs to a **third party the protocol cannot
+bind and the client cannot check**. Note the asymmetry that makes it worth stating: the precondition
+is verifiable by the *zone owner* (who chooses the CA) and never by the *connecting client*, so it is
+a property of the deployment, not of the protocol — which is what `structural` is supposed to mean.
+
+Fix (apply to REACH-1a, §7 SEC-2, and the §8 residual — fix-and-sweep, all three): state that the
+`structural` claim additionally requires the named CA to actually honour RFC 8657, cite §5.2, require
+the zone owner to restrict `issue`/`issuewild` to CAs whose `accounturi` enforcement it has
+established, and state that absent that the level is `declared`.
 | L2 | **Prior art / deployed systems** (Matrix, Nostr, ActivityPub, Signal, DIDComm, IPFS, Farcaster) | A failure these systems already hit in production and documented — metadata leakage, relay economics, moderation collapse, key-loss UX, spam. Ours is a paper design; theirs have scars. | pending |
 | L3 | **IETF/RFC-editor lens** | RFC-grade structure: BCP-14 correctness, IANA Considerations completeness, Security Considerations per-section, normative vs informative separation, ambiguity an independent implementer would resolve differently. | pending |
 | L4 | **Independent implementer** | Can a competent engineer build an interoperating node from the text alone? Every "obvious" step left unwritten is an interop break waiting to happen. | pending |
