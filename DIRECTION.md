@@ -210,6 +210,16 @@ sustainability, is named at §5):
   discloses its policy) that it did not selectively omit or bury a result — has **no deployed
   precedent**. Named here as open, not claimed solved.
 
+  **A second mechanism, which the coordinator contract does not reach at all: client defaults.**
+  Nostr is the deployed precedent — its relays are genuinely swappable and permissionless, yet every
+  major client ships a hardcoded default relay list, and that alone produced real concentration
+  without any relay violating anything. The re-centralizing actor there is the *client's* choice of
+  default, not the coordinator's conduct, so no clause binding coordinators — accountability,
+  swappability, self-hostability, declared visibility — constrains it. KOTVA inherits this exposure
+  wherever a client must pick an `indexer`, `matcher`, or `relay` on a user's behalf. Client
+  conformance is the only surface that could address it (surfacing and rotating defaults rather than
+  freezing one set), and this specification does not currently require that. Disclosed as open.
+
 ---
 
 ## 9. The perfection rules — how this spec stays simple and future-proof

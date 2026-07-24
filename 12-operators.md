@@ -14,7 +14,7 @@ structurally unable to take from you."
 
 | Shape | Who runs the box | What it costs | What it limits |
 |-------|------------------|---------------|----------------|
-| **Self-host** | the user, on their own hardware | nothing beyond the hardware and connection | nothing — every protocol, client, and privacy feature, unrestricted |
+| **Self-host** | the user, on their own hardware | no money to anyone; the hardware, the connection, and the operator's own ongoing time (see the honest limit below) | nothing — every protocol, client, and privacy feature, unrestricted |
 | **Someone else hosts** | a peer, a friend, a community, a third-party operator | whatever those two parties agree, including nothing | conveniences only — never capability, never privacy, never access to your own data |
 
 This is a distinction between **whose machine it is**, not between a free tier and a paid tier.
@@ -28,6 +28,17 @@ nobody, ever, and loses no capability.** Not a reduced feature set, not a "commu
 a rate limit — the full protocol, including metadata privacy, group messaging, files, recovery, and
 web login. There is no party in that user's path to charge them, which is a stronger guarantee than
 a promise not to (§12.3).
+
+**Honest limit: "pays nobody" is a claim about money, not about effort.** Running a box is ongoing
+systems administration — upgrades, backups, key custody, certificate renewal, storage growth, and
+diagnosing failures with nobody on call. Matrix is the closest deployed precedent for self-hosted
+infrastructure of this shape, and its operators report exactly this burden accreting over time
+until many abandon their servers; no protocol design legislates that away, and this one does not
+claim to. What the paragraph above asserts is that **no party can charge a self-hoster or withhold
+capability from them**, and that holds. It is not an assertion that self-hosting is effortless, and
+a reader should not take it as one. The "someone else hosts" row exists precisely because trading
+*operation* for someone else's time is a legitimate and expected choice — it costs authority
+nothing (§12.1), which is the property this specification actually defends.
 
 ## 12.2 The operator seam
 

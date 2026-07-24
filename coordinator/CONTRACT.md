@@ -78,7 +78,24 @@ controlled by a third party, never the user:
 
 The contract confines the scarcity to these two disclosed classes instead of letting either spread
 to custody, naming, or moderation. Every other coordinator kind, including every non-custodial
-member of `arbiter`/`oracle`, clears the ordinary self-host bar.
+member of `arbiter`/`oracle`, clears the ordinary self-host bar **at the scope its profile actually
+requires**.
+
+**Honest limit on that claim, at global scope.** For `indexer` and `matcher` the bar is
+scope-dependent, and the blanket reading oversells it. Crawling and serving *the whole network's*
+public objects is a bandwidth-and-storage burden closer to §2.3's scarce resources than to
+something "a sufficiently motivated user can always meet with hardware, bandwidth, or software
+alone". The AT Protocol relay is the deployed precedent: running an independent full-network
+instance required real dedicated infrastructure investment rather than ordinary self-hosting,
+despite a protocol that nominally permits anyone to run one. KOTVA's mitigation is genuine but
+partial — SEARCH is following-graph-first and indexer-optional
+([profiles/search.md](../profiles/search.md)), so the expensive global index is never load-bearing
+and a user always retains the local-scope version, which is a real architectural difference from a
+design where the relay is closer to required infrastructure. The self-host backstop for
+`indexer`/`matcher` is therefore guaranteed **at local / following-graph scope**, and is *not*
+claimed at whole-network scope. This is the self-hostability face of the discovery
+re-centralization open problem ([DIRECTION §8](../DIRECTION.md)), stated here because §2.3's
+blanket sentence would otherwise read as covering a case the evidence says it does not.
 
 ### 2.4 Content-visibility declared
 Every coordinator MUST declare, in its descriptor, exactly one **visibility class** at one
